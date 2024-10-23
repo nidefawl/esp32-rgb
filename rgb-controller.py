@@ -25,7 +25,7 @@ CFG_NUM_CONFIG = 4
 packet_hdr = struct.Struct("<H H")
 heartbeat_message = struct.Struct("<Q")
 config_message = struct.Struct("<I I")
-# led frame message: frame size, frame id, then led data. LED data is 4 bytes per LED (RGBW) and appended after 
+# led frame message: frame size (in number of LEDS), frame offset (in number of LEDS), then led data (LED data is 4 bytes per LED (WRGB))
 led_frame_message = struct.Struct("<I I")
 
 
