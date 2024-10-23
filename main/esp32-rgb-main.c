@@ -25,6 +25,7 @@
 #include <lwip/netdb.h>
 #include "rgb-network-types.h"
 
+#define CONFIG_USE_IPV4
 
 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
 #define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000)
@@ -280,11 +281,10 @@ char rx_buffer[4096];
 static void udp_server_task(void *pvParameters)
 {
     char addr_str[128];
-#ifdef CONFIG_USE_IPV4
-    int addr_family = AF_INET;
-#endif
-#ifdef CONFIG_USE_IPV6
+#if CONFIG_USE_IPV6
     int addr_family = AF_INET6;
+#else
+    int addr_family = AF_INET;
 #endif
     int ip_protocol = 0;
     struct sockaddr_in6 dest_addr;

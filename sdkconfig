@@ -371,14 +371,6 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
-# OSC Server Configuration
-#
-CONFIG_USE_IPV4=y
-# CONFIG_USE_IPV6 is not set
-CONFIG_OSC_UDP_PORT=54321
-# end of OSC Server Configuration
-
-#
 # Example Connection Configuration
 #
 CONFIG_ENV_GPIO_RANGE_MIN=0
