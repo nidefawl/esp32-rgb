@@ -374,6 +374,10 @@ void app_main(void) {
   reset_display_state();
   for (int i = 0; i < LED_STRIP_NUM_STRIPS; i++) {
     led_strips[i] = configure_led(i);
+    if (led_strips[i] == NULL) {
+      ESP_LOGE(TAG, "Failed to configure LED strip %d\n", i);
+      return;
+    }
     ESP_ERROR_CHECK(led_strip_clear(led_strips[i]));
   }
   ESP_ERROR_CHECK(esp_event_loop_create_default());
