@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,6 +26,7 @@
 #include <lwip/netdb.h>
 
 #define CONFIG_USE_IPV4
+#define CONFIG_USE_BUFFER_SYNC
 
 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
 #define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000)
@@ -46,21 +48,27 @@ struct LEDState {
 };
 
 struct DisplayState {
-  struct LEDState leds[LED_STRIP_NUM_STRIPS][LED_STRIP_LED_NUMBERS];
   uint8_t maxBrightness;
   uint16_t frameRate;
   uint32_t stripesEnable;
-  uint32_t time_ms;
+  uint8_t readIndex;
+  uint8_t writeIndex;
 };
-
-struct DisplayState displayState;
+enum : uint8_t {
+  RingBufferLength = 8,
+};
+volatile struct DisplayState displayState;
+volatile struct LEDState ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_LED_NUMBERS];
+SemaphoreHandle_t xSemaphore = NULL;
+StaticSemaphore_t xSemaphoreBuffer;
 
 void reset_display_state() {
-  memset(displayState.leds, 0, sizeof(displayState.leds));
+  memset(ledsBuffer, 0, sizeof(ledsBuffer));
   displayState.frameRate     = 30;
   displayState.maxBrightness = 127;
   displayState.stripesEnable = ~0;
-  displayState.time_ms       = 0;
+  displayState.readIndex     = 0;
+  displayState.writeIndex    = 0;
 }
 
 uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
@@ -162,11 +170,21 @@ led_strip_handle_t configure_led(int n) {
 void app_led_main_loop() {
   ESP_LOGI(TAG, "Starting LED main loop");
   const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
+  int64_t timeLastFPS_us = esp_timer_get_time();
+  int64_t numFrames = 0;
   while (1) {
-    for (int i = 0; i < totalLEDs; i++) {
+    // check if we can read the next frame
+    bool bHoldsSemaphore = true;
+#ifdef CONFIG_USE_BUFFER_SYNC
+    bHoldsSemaphore = xSemaphoreTake( xSemaphore, 1 );
+#endif
+    const uint8_t readIndex = displayState.readIndex;
+    bool bCanRead = bHoldsSemaphore && readIndex != displayState.writeIndex;
+    numFrames++;
+    for (int i = 0; i < totalLEDs && bCanRead; i++) {
       const int stripIndex = i / LED_STRIP_LED_NUMBERS;
       const int ledIndex   = i % LED_STRIP_LED_NUMBERS;
-      const struct LEDState* ledState = &displayState.leds[stripIndex][ledIndex];
+      volatile const struct LEDState* ledState = &ledsBuffer[readIndex][stripIndex][ledIndex];
       uint8_t maxBrightness = displayState.maxBrightness;
       if (!(displayState.stripesEnable & (1 << stripIndex))) {
         maxBrightness = 0;
@@ -179,28 +197,49 @@ void app_led_main_loop() {
       };
 #if HAS_GRBW
       ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
-                                               color[0], color[1], color[2],
-                                               color[3]));
+                                              color[0], color[1], color[2],
+                                              color[3]));
 #else
       ESP_ERROR_CHECK(led_strip_set_pixel(led_strips[stripIndex], ledIndex,
                                           color[0], color[1], color[2]));
 #endif
     }
+#ifdef CONFIG_USE_BUFFER_SYNC
+    if (bHoldsSemaphore) {
+      xSemaphoreGive( xSemaphore );
+    }
+#endif
 
     /* Refresh all strips */
     for (int j = 0; j < LED_STRIP_NUM_STRIPS; j++) {
       ESP_ERROR_CHECK(led_strip_refresh(led_strips[j]));
     }
     const uint32_t frameDelay_ms = 1000 / displayState.frameRate;
-    vTaskDelay(pdMS_TO_TICKS(frameDelay_ms));
-    displayState.time_ms += frameDelay_ms;
+
+    int delay = pdMS_TO_TICKS(frameDelay_ms * 3 / 4);
+    if (delay > 0) {
+      vTaskDelay(delay);
+    }
+    if (bCanRead) {
+      displayState.readIndex = (readIndex + 1) % RingBufferLength;
+    }
+
+    // print FPS stats every 10 seconds
+    int64_t timeSince_us = numFrames < 10 ? 0 : esp_timer_get_time() - timeLastFPS_us;
+    if (timeSince_us > 10 * 1e6) {
+      float fps = numFrames / (((float)timeSince_us) / 1e6);
+      ESP_LOGI(TAG, "FPS: %.2f", fps);
+      timeLastFPS_us = esp_timer_get_time();
+      numFrames   = 0;
+    }
+
+    // increment frame ID
+    frameId++;
   }
 }
 
-void send_packet(int sock, struct sockaddr_storage* dest_addr,
-                 struct packet_hdr_t* header, void* message, int message_len) {
-  char tx_buffer[128];
-  memcpy(tx_buffer, header, sizeof(struct packet_hdr_t));
+void send_packet(int sock, struct sockaddr_storage* dest_addr, void* message, int message_len) {
+  char tx_buffer[256];
   memcpy(tx_buffer + sizeof(struct packet_hdr_t), message, message_len);
   int err = sendto(sock, tx_buffer, sizeof(struct packet_hdr_t) + message_len, 0,
              (struct sockaddr*) dest_addr, sizeof(struct sockaddr_storage));
@@ -214,31 +253,31 @@ void handle_packet(char* rx_buffer, int len, int sock,
   struct packet_hdr_t* hdr = (struct packet_hdr_t*) rx_buffer;
   if (hdr->packetType == PKT_TYPE_HEARTBEAT) {
     // struct packet_heartbeat_t *pkt = (struct packet_heartbeat_t *) rx_buffer;
-    // ESP_LOGI(TAG, "Received heartbeat packet\n");
+    // ESP_LOGI(TAG, "Received heartbeat packet");
     struct packet_heartbeat_t response = {
       .header = { .packetType = PKT_TYPE_HEARTBEAT, .len = sizeof(struct heartbeat_message_t), },
       .message = { .frameId = frameId, },
     };
-    send_packet(sock, source_addr, &response.header, &response, sizeof(response));
+    send_packet(sock, source_addr, &response, sizeof(response));
   } else if (hdr->packetType == PKT_TYPE_CONFIG) {
     struct packet_config_t* pkt = (struct packet_config_t*) rx_buffer;
     if (pkt->message.cfgId >= CFG_NUM_CONFIGS) {
-      ESP_LOGI(TAG, "Invalid config ID %lu\n", pkt->message.cfgId);
+      ESP_LOGI(TAG, "Invalid config ID %lu", pkt->message.cfgId);
       return;
     }
     enum RGBConfigType cfgId = pkt->message.cfgId;
     switch (cfgId) {
       case CFG_ID_MAX_BRIGHTNESS:
         displayState.maxBrightness = clamp_u32(pkt->message.value, 0, 255);
-        ESP_LOGI(TAG, "Set max brightness to %u\n", displayState.maxBrightness);
+        ESP_LOGI(TAG, "Set max brightness to %u", displayState.maxBrightness);
         break;
       case CFG_ID_FRAME_RATE:
         displayState.frameRate = clamp_u32(pkt->message.value, 1, 10000);
-        ESP_LOGI(TAG, "Set frame rate to %u\n", displayState.frameRate);
+        ESP_LOGI(TAG, "Set frame rate to %u", displayState.frameRate);
         break;
       case CFG_ID_STRIPES_ENABLE:
         displayState.stripesEnable = pkt->message.value;
-        ESP_LOGI(TAG, "Set stripes enable to %lu\n", displayState.stripesEnable);
+        ESP_LOGI(TAG, "Set stripes enable to %lu", displayState.stripesEnable);
         break;
       default:
         break;
@@ -247,7 +286,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
     struct packet_led_frame_t* pkt = (struct packet_led_frame_t*) rx_buffer;
     if (pkt->message.frameOffset + pkt->message.frameSize >
         LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS) {
-      ESP_LOGE(TAG, "Invalid frame offset %lu and size %lu\n",
+      ESP_LOGE(TAG, "Invalid frame offset %lu and size %lu",
                pkt->message.frameOffset, pkt->message.frameSize);
       return;
     }
@@ -256,23 +295,36 @@ void handle_packet(char* rx_buffer, int len, int sock,
                        sizeof(struct led_frame_message_t) +
                        pkt->message.frameSize * 4;
     if (len != expectedSize) {
-      ESP_LOGE(TAG, "Invalid frame data length %d. Expected %d\n", len, expectedSize);
+      ESP_LOGE(TAG, "Invalid frame data length %d. Expected %d", len, expectedSize);
       return;
     }
 
+#ifdef CONFIG_USE_BUFFER_SYNC
+    if(!xSemaphoreTake( xSemaphore, ( TickType_t ) 10 )) {
+      return;
+    }
+    // vTaskSuspendAll();
+#endif
     uint8_t* pData = pkt->message.data;
+    int writeIndex = displayState.writeIndex;
     for (int i = 0; i < pkt->message.frameSize; i++) {
       const int ledIndex        = pkt->message.frameOffset + i;
       const int stripIndex      = ledIndex / LED_STRIP_LED_NUMBERS;
       const int ledStripIndex   = ledIndex % LED_STRIP_LED_NUMBERS;
-      struct LEDState* ledState = &displayState.leds[stripIndex][ledStripIndex];
-      ledState->r               = pData[4 * i];
-      ledState->g               = pData[4 * i + 1];
-      ledState->b               = pData[4 * i + 2];
-      ledState->w               = pData[4 * i + 3];
+      volatile struct LEDState* ledState = &ledsBuffer[writeIndex][stripIndex][ledStripIndex];
+      ledState->r = pData[4 * i];
+      ledState->g = pData[4 * i + 1];
+      ledState->b = pData[4 * i + 2];
+      ledState->w = pData[4 * i + 3];
     }
+    displayState.writeIndex = (writeIndex + 1) % RingBufferLength;
+#ifdef CONFIG_USE_BUFFER_SYNC
+    xSemaphoreGive( xSemaphore );
+    // xTaskResumeAll();
+#endif
   }
 }
+
 
 char udp_rx_buffer[4096];
 static void udp_server_task(void* pvParameters) {
@@ -345,7 +397,7 @@ static void udp_server_task(void* pvParameters) {
                      sizeof(addr_str) - 1);
       }
 
-      /* ESP_LOGI(TAG, "Received %d bytes from %s\n", len, addr_str);
+      /* ESP_LOGI(TAG, "Received %d bytes from %s", len, addr_str);
       // print first 8 bytes as hex
       for (int i = 0; i < 8 && i < len; i++) {
         ESP_LOGI(TAG, "rx_buffer[%d] = 0x%02x", i, rx_buffer[i]);
@@ -371,7 +423,7 @@ void app_main(void) {
   for (int i = 0; i < LED_STRIP_NUM_STRIPS; i++) {
     led_strips[i] = configure_led(i);
     if (led_strips[i] == NULL) {
-      ESP_LOGE(TAG, "Failed to configure LED strip %d\n", i);
+      ESP_LOGE(TAG, "Failed to configure LED strip %d", i);
       return;
     }
     ESP_ERROR_CHECK(led_strip_clear(led_strips[i]));
@@ -379,6 +431,13 @@ void app_main(void) {
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ESP_ERROR_CHECK(example_connect());
   ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+  xSemaphore = xSemaphoreCreateBinaryStatic( &xSemaphoreBuffer );
+  if (xSemaphore == NULL) {
+    ESP_LOGE(TAG, "Failed to create semaphore");
+    return;
+  }
+	xSemaphoreGive( xSemaphore );
+
   xTaskCreate(udp_server_task, "udp_server", 4096, (void*) 0, 5, NULL);
   app_led_main_loop();
 }
