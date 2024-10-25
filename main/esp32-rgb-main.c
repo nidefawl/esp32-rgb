@@ -123,8 +123,8 @@ led_strip_handle_t configure_led(int n) {
 
   // LED strip general initialization, according to your led board design
   led_strip_config_t strip_config = {
-    .strip_gpio_num = gpio,           // The GPIO that connected to the LED strip's data line
-    .max_leds = LED_STRIP_LED_NUMBERS,// The number of LEDs in the strip,
+    .strip_gpio_num = gpio,                 // The GPIO that connected to the LED strip's data line
+    .max_leds       = LED_STRIP_LED_NUMBERS,// The number of LEDs in the strip,
 #if HAS_GRBW
     .led_pixel_format = LED_PIXEL_FORMAT_GRBW,// Pixel format of your LED strip
     .led_model        = LED_MODEL_SK6812,     // LED strip model
@@ -143,10 +143,10 @@ led_strip_handle_t configure_led(int n) {
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
       .rmt_channel = 0,
 #else
-      .clk_src = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
-      .resolution_hz = LED_STRIP_RMT_RES_HZ,// RMT counter clock frequency
-      .flags.with_dma =
-      false,// DMA feature is available on ESP target like ESP32-S3
+             .clk_src       = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
+             .resolution_hz = LED_STRIP_RMT_RES_HZ,// RMT counter clock frequency
+             .flags.with_dma =
+          false,// DMA feature is available on ESP target like ESP32-S3
 #endif
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
@@ -178,13 +178,13 @@ void app_led_main_loop() {
     ESP_ERROR_CHECK(led_strip_clear(led_strips[i]));
   }
   const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
-  int64_t timeLastFPS_us = esp_timer_get_time();
-  int64_t numFrames = 0;
+  int64_t timeLastFPS_us   = esp_timer_get_time();
+  int64_t numFrames        = 0;
   while (1) {
     // check if we can read the next frame
     bool bHoldsSemaphore = true;
 #ifdef CONFIG_USE_BUFFER_SYNC
-    bHoldsSemaphore = xSemaphoreTake( xSemaphore, 1 );
+    bHoldsSemaphore = xSemaphoreTake(xSemaphore, 1);
 #endif
     const uint8_t readIndex = displayState.readIndex;
     bool bCanRead = bHoldsSemaphore && readIndex != displayState.writeIndex;
@@ -205,8 +205,8 @@ void app_led_main_loop() {
       };
 #if HAS_GRBW
       ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
-                                              color[0], color[1], color[2],
-                                              color[3]));
+                                               color[0], color[1], color[2],
+                                               color[3]));
 #else
       ESP_ERROR_CHECK(led_strip_set_pixel(led_strips[stripIndex], ledIndex,
                                           color[0], color[1], color[2]));
@@ -214,7 +214,7 @@ void app_led_main_loop() {
     }
 #ifdef CONFIG_USE_BUFFER_SYNC
     if (bHoldsSemaphore) {
-      xSemaphoreGive( xSemaphore );
+      xSemaphoreGive(xSemaphore);
     }
 #endif
 
@@ -238,10 +238,10 @@ void app_led_main_loop() {
     // print FPS stats every 10 seconds
     int64_t timeSince_us = numFrames < 10 ? 0 : esp_timer_get_time() - timeLastFPS_us;
     if (timeSince_us > 10 * 1e6) {
-      float fps = numFrames / (((float)timeSince_us) / 1e6);
+      float fps = numFrames / (((float) timeSince_us) / 1e6);
       ESP_LOGI(TAG, "FPS: %.2f", fps);
       timeLastFPS_us = esp_timer_get_time();
-      numFrames   = 0;
+      numFrames      = 0;
     }
 
     // increment frame ID
@@ -253,7 +253,7 @@ void send_packet(int sock, struct sockaddr_storage* dest_addr, void* message, in
   char tx_buffer[256];
   memcpy(tx_buffer + sizeof(struct packet_hdr_t), message, message_len);
   int err = sendto(sock, tx_buffer, sizeof(struct packet_hdr_t) + message_len, 0,
-             (struct sockaddr*) dest_addr, sizeof(struct sockaddr_storage));
+                   (struct sockaddr*) dest_addr, sizeof(struct sockaddr_storage));
   if (err < 0) {
     ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
   }
@@ -266,8 +266,13 @@ void handle_packet(char* rx_buffer, int len, int sock,
     // struct packet_heartbeat_t *pkt = (struct packet_heartbeat_t *) rx_buffer;
     // ESP_LOGI(TAG, "Received heartbeat packet");
     struct packet_heartbeat_t response = {
-      .header = { .packetType = PKT_TYPE_HEARTBEAT, .len = sizeof(struct heartbeat_message_t), },
-      .message = { .frameId = frameId, },
+      .header = {
+          .packetType = PKT_TYPE_HEARTBEAT,
+          .len        = sizeof(struct heartbeat_message_t),
+      },
+      .message = {
+          .frameId = frameId,
+      },
     };
     send_packet(sock, source_addr, &response, sizeof(response));
   } else if (hdr->packetType == PKT_TYPE_CONFIG) {
@@ -311,7 +316,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
     }
 
 #ifdef CONFIG_USE_BUFFER_SYNC
-    if(!xSemaphoreTake( xSemaphore, ( TickType_t ) 10 )) {
+    if (!xSemaphoreTake(xSemaphore, (TickType_t) 10)) {
       return;
     }
     // vTaskSuspendAll();
@@ -319,9 +324,9 @@ void handle_packet(char* rx_buffer, int len, int sock,
     uint8_t* pData = pkt->message.data;
     int writeIndex = displayState.writeIndex;
     for (int i = 0; i < pkt->message.frameSize; i++) {
-      const int ledIndex        = pkt->message.frameOffset + i;
-      const int stripIndex      = ledIndex / LED_STRIP_LED_NUMBERS;
-      const int ledStripIndex   = ledIndex % LED_STRIP_LED_NUMBERS;
+      const int ledIndex      = pkt->message.frameOffset + i;
+      const int stripIndex    = ledIndex / LED_STRIP_LED_NUMBERS;
+      const int ledStripIndex = ledIndex % LED_STRIP_LED_NUMBERS;
       volatile struct LEDState* ledState = &ledsBuffer[writeIndex][stripIndex][ledStripIndex];
       ledState->r = pData[4 * i];
       ledState->g = pData[4 * i + 1];
@@ -330,7 +335,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
     }
     displayState.writeIndex = (writeIndex + 1) % RingBufferLength;
 #ifdef CONFIG_USE_BUFFER_SYNC
-    xSemaphoreGive( xSemaphore );
+    xSemaphoreGive(xSemaphore);
     // xTaskResumeAll();
 #endif
   }
@@ -430,12 +435,12 @@ void app_main(void) {
   ESP_ERROR_CHECK(nvs_flash_init());
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
-  xSemaphore = xSemaphoreCreateBinaryStatic( &xSemaphoreBuffer );
+  xSemaphore = xSemaphoreCreateBinaryStatic(&xSemaphoreBuffer);
   if (xSemaphore == NULL) {
     ESP_LOGE(TAG, "Failed to create semaphore");
     return;
   }
-	xSemaphoreGive( xSemaphore );
+  xSemaphoreGive(xSemaphore);
   reset_display_state();
   xTaskCreatePinnedToCore(app_led_main_loop, "led_main_loop", 4096, NULL, 6, NULL, 1);
   ESP_ERROR_CHECK(example_connect());
