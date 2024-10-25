@@ -169,6 +169,14 @@ led_strip_handle_t configure_led(int n) {
 
 void app_led_main_loop() {
   ESP_LOGI(TAG, "Starting LED main loop");
+  for (int i = 0; i < LED_STRIP_NUM_STRIPS; i++) {
+    led_strips[i] = configure_led(i);
+    if (led_strips[i] == NULL) {
+      ESP_LOGE(TAG, "Failed to configure LED strip %d", i);
+      return;
+    }
+    ESP_ERROR_CHECK(led_strip_clear(led_strips[i]));
+  }
   const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
   int64_t timeLastFPS_us = esp_timer_get_time();
   int64_t numFrames = 0;
@@ -187,7 +195,7 @@ void app_led_main_loop() {
       volatile const struct LEDState* ledState = &ledsBuffer[readIndex][stripIndex][ledIndex];
       uint8_t maxBrightness = displayState.maxBrightness;
       if (!(displayState.stripesEnable & (1 << stripIndex))) {
-        maxBrightness = 0;
+        continue;
       }
       uint8_t color[4] = {
         scale_and_clamp(ledState->r, maxBrightness),
@@ -211,8 +219,11 @@ void app_led_main_loop() {
 #endif
 
     /* Refresh all strips */
-    for (int j = 0; j < LED_STRIP_NUM_STRIPS; j++) {
-      ESP_ERROR_CHECK(led_strip_refresh(led_strips[j]));
+    for (int stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
+      if (!(displayState.stripesEnable & (1 << stripIndex))) {
+        continue;
+      }
+      ESP_ERROR_CHECK(led_strip_refresh(led_strips[stripIndex]));
     }
     const uint32_t frameDelay_ms = 1000 / displayState.frameRate;
 
@@ -418,26 +429,16 @@ static void udp_server_task(void* pvParameters) {
 void app_main(void) {
   ESP_ERROR_CHECK(nvs_flash_init());
   ESP_ERROR_CHECK(esp_netif_init());
-
-  reset_display_state();
-  for (int i = 0; i < LED_STRIP_NUM_STRIPS; i++) {
-    led_strips[i] = configure_led(i);
-    if (led_strips[i] == NULL) {
-      ESP_LOGE(TAG, "Failed to configure LED strip %d", i);
-      return;
-    }
-    ESP_ERROR_CHECK(led_strip_clear(led_strips[i]));
-  }
   ESP_ERROR_CHECK(esp_event_loop_create_default());
-  ESP_ERROR_CHECK(example_connect());
-  ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
   xSemaphore = xSemaphoreCreateBinaryStatic( &xSemaphoreBuffer );
   if (xSemaphore == NULL) {
     ESP_LOGE(TAG, "Failed to create semaphore");
     return;
   }
 	xSemaphoreGive( xSemaphore );
-
+  reset_display_state();
+  xTaskCreatePinnedToCore(app_led_main_loop, "led_main_loop", 4096, NULL, 6, NULL, 1);
+  ESP_ERROR_CHECK(example_connect());
+  ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
   xTaskCreate(udp_server_task, "udp_server", 4096, (void*) 0, 5, NULL);
-  app_led_main_loop();
 }
