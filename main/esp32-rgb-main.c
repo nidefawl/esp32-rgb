@@ -40,13 +40,6 @@ static const char* TAG                              = "RGB_MAIN";
 led_strip_handle_t led_strips[LED_STRIP_NUM_STRIPS] = {};
 uint64_t frameId                                    = 0;
 
-struct LEDState {
-  uint8_t r;
-  uint8_t g;
-  uint8_t b;
-  uint8_t w;
-};
-
 struct DisplayState {
   uint8_t maxBrightness;
   uint16_t frameRate;
@@ -54,16 +47,19 @@ struct DisplayState {
   uint8_t readIndex;
   uint8_t writeIndex;
 };
+
 enum : uint8_t {
   RingBufferLength = 8,
 };
-volatile struct DisplayState displayState;
-volatile struct LEDState ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_LED_NUMBERS];
+
+struct DisplayState displayState;
+volatile uint32_t ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_LED_NUMBERS];
+
 SemaphoreHandle_t xSemaphore = NULL;
 StaticSemaphore_t xSemaphoreBuffer;
 
 void reset_display_state() {
-  memset(ledsBuffer, 0, sizeof(ledsBuffer));
+  memset((void*)ledsBuffer, 0, sizeof(ledsBuffer));
   displayState.frameRate     = 30;
   displayState.maxBrightness = 127;
   displayState.stripesEnable = ~0;
@@ -78,6 +74,19 @@ uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
   if (scaled > 255)
     return 255;
   return scaled;
+}
+
+
+void scale_and_clamp_u32(uint32_t color, uint8_t maxBrightness, uint8_t* out) {
+  // split u32 into RGBW
+  uint8_t r = (color >> 24) & 0xFF;
+  uint8_t g = (color >> 16) & 0xFF;
+  uint8_t b = (color >> 8) & 0xFF;
+  uint8_t w = color & 0xFF;
+  out[0]    = scale_and_clamp(r, maxBrightness);
+  out[1]    = scale_and_clamp(g, maxBrightness);
+  out[2]    = scale_and_clamp(b, maxBrightness);
+  out[3]    = scale_and_clamp(w, maxBrightness);
 }
 
 uint32_t clamp_u32(uint32_t i, uint32_t i_min, uint32_t i_max) {
@@ -189,20 +198,16 @@ void app_led_main_loop() {
     const uint8_t readIndex = displayState.readIndex;
     bool bCanRead = bHoldsSemaphore && readIndex != displayState.writeIndex;
     numFrames++;
+    uint8_t color[4] = {};
     for (int i = 0; i < totalLEDs && bCanRead; i++) {
       const int stripIndex = i / LED_STRIP_LED_NUMBERS;
       const int ledIndex   = i % LED_STRIP_LED_NUMBERS;
-      volatile const struct LEDState* ledState = &ledsBuffer[readIndex][stripIndex][ledIndex];
+      const uint32_t ledState = ledsBuffer[readIndex][stripIndex][ledIndex];
       uint8_t maxBrightness = displayState.maxBrightness;
       if (!(displayState.stripesEnable & (1 << stripIndex))) {
         continue;
       }
-      uint8_t color[4] = {
-        scale_and_clamp(ledState->r, maxBrightness),
-        scale_and_clamp(ledState->g, maxBrightness),
-        scale_and_clamp(ledState->b, maxBrightness),
-        scale_and_clamp(ledState->w, maxBrightness),
-      };
+      scale_and_clamp_u32(ledState, maxBrightness, color);
 #if HAS_GRBW
       ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
                                                color[0], color[1], color[2],
@@ -321,17 +326,13 @@ void handle_packet(char* rx_buffer, int len, int sock,
     }
     // vTaskSuspendAll();
 #endif
-    uint8_t* pData = pkt->message.data;
+    uint32_t* pData = (uint32_t*) pkt->message.data;
     int writeIndex = displayState.writeIndex;
     for (int i = 0; i < pkt->message.frameSize; i++) {
       const int ledIndex      = pkt->message.frameOffset + i;
       const int stripIndex    = ledIndex / LED_STRIP_LED_NUMBERS;
       const int ledStripIndex = ledIndex % LED_STRIP_LED_NUMBERS;
-      volatile struct LEDState* ledState = &ledsBuffer[writeIndex][stripIndex][ledStripIndex];
-      ledState->r = pData[4 * i];
-      ledState->g = pData[4 * i + 1];
-      ledState->b = pData[4 * i + 2];
-      ledState->w = pData[4 * i + 3];
+      ledsBuffer[writeIndex][stripIndex][ledStripIndex] = pData[i];
     }
     displayState.writeIndex = (writeIndex + 1) % RingBufferLength;
 #ifdef CONFIG_USE_BUFFER_SYNC
