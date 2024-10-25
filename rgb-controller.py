@@ -84,9 +84,8 @@ def process_pixels_rainbow_circle(time_since, frame_id, state):
             else:
                 r = 255
                 b = (360 - hue) / 60 * 255
-
             # add RGB values to led_frame_data
-            led_frame_data += struct.pack("BBBB", int(r), int(g), int(b), int(w))
+            led_frame_data += struct.pack("BBBB", int(b), int(g), int(r), int(w))
     return led_frame_data
 
 def process_pixels_white_noise(time_since, frame_id, state):
@@ -101,7 +100,7 @@ def process_pixels_white_noise(time_since, frame_id, state):
             b = random.randint(0, 255)
             w = random.randint(0, 255)
             # add RGB values to led_frame_data
-            led_frame_data += struct.pack("BBBB", int(r), int(g), int(b), int(w))
+            led_frame_data += struct.pack("BBBB", int(b), int(g), int(r), int(w))
     return led_frame_data
 
 def main():

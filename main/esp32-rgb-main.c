@@ -78,11 +78,10 @@ uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
 
 
 void scale_and_clamp_u32(uint32_t color, uint8_t maxBrightness, uint8_t* out) {
-  // split u32 into RGBW
-  uint8_t r = (color >> 24) & 0xFF;
-  uint8_t g = (color >> 16) & 0xFF;
-  uint8_t b = (color >> 8) & 0xFF;
-  uint8_t w = color & 0xFF;
+  uint8_t w = (color >> 24) & 0xFF;
+  uint8_t r = (color >> 16) & 0xFF;
+  uint8_t g = (color >> 8) & 0xFF;
+  uint8_t b = color & 0xFF;
   out[0]    = scale_and_clamp(r, maxBrightness);
   out[1]    = scale_and_clamp(g, maxBrightness);
   out[2]    = scale_and_clamp(b, maxBrightness);
