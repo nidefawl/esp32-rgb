@@ -11,6 +11,7 @@
 #include "led_strip_spi.h"
 #include "led_strip_types.h"
 #include "nvs_flash.h"
+#include "portmacro.h"
 #include "protocol_examples_common.h"
 #include <math.h>
 #include <stdint.h>
@@ -50,20 +51,22 @@ struct DisplayState {
   uint16_t frameRate;
   uint32_t stripesEnable;
   enum DebugFlags debugFlags;
+  uint32_t heartbeatIntervalFrames; // send heartbeat every n frames
   // ring buffer positions
-  uint8_t readIndex;
-  uint8_t writeIndex;
+  volatile uint64_t readIndex;
+  volatile uint64_t writeIndex;
   // runtime stats
   int64_t numCallbacks;
   int64_t numFrames;
   int64_t numBufferUnderrun;
+  int64_t numBufferOverrun;
   int64_t numLastCallbacks;
   int64_t numLastFrames;
 };
 
 
-enum : uint8_t {
-  RingBufferLength = 8,
+enum : uint16_t {
+  RingBufferLength = 64,
 };
 
 struct DisplayState displayState;
@@ -71,6 +74,8 @@ volatile uint32_t ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_L
 esp_timer_handle_t periodic_timer;
 SemaphoreHandle_t xSemaphore = NULL;
 StaticSemaphore_t xSemaphoreBuffer;
+int g_socket_udp = -1;
+struct sockaddr_storage g_udp_master_address = {};
 
 void reset_display_state() {
   memset((void*)ledsBuffer, 0, sizeof(ledsBuffer));
@@ -78,6 +83,8 @@ void reset_display_state() {
   displayState.frameRate     = 30;
   displayState.maxBrightness = 127;
   displayState.stripesEnable = ~0;
+  displayState.debugFlags    = DebugNone;
+  displayState.heartbeatIntervalFrames = 0;
   displayState.readIndex  = 0;
   displayState.writeIndex = RingBufferLength / 2;
 }
@@ -195,6 +202,20 @@ led_strip_handle_t configure_led(int n) {
   return led_strip;
 }
 
+void send_packet(int sock, struct sockaddr_storage* dest_addr, void* message, int message_len) {
+  char tx_buffer[256];
+  if (message_len > sizeof(tx_buffer)) {
+    ESP_LOGE(TAG, "Message too long to send");
+    return;
+  }
+  memcpy(tx_buffer, message, message_len);
+  int err = sendto(sock, tx_buffer, message_len, 0,
+                   (struct sockaddr*) dest_addr, sizeof(struct sockaddr_storage));
+  if (err < 0) {
+    ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+  }
+}
+
 static void led_strips_update(void* arg)
 {
   const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
@@ -202,14 +223,14 @@ static void led_strips_update(void* arg)
 #ifdef CONFIG_USE_BUFFER_SYNC
   bHoldsSemaphore = xSemaphoreTake(xSemaphore, 1);
 #endif
-  const uint8_t readIndex = displayState.readIndex;
   // check if we can read the next frame
-  bool bCanRead = bHoldsSemaphore && readIndex != displayState.writeIndex;
+  bool bCanRead = bHoldsSemaphore && displayState.readIndex < displayState.writeIndex;
   uint8_t color[4] = {};
-  for (int i = 0; i < totalLEDs && bCanRead; i++) {
-    const int stripIndex = i / LED_STRIP_LED_NUMBERS;
-    const int ledIndex   = i % LED_STRIP_LED_NUMBERS;
-    const uint32_t ledState = ledsBuffer[readIndex][stripIndex][ledIndex];
+  const uint64_t readIdx = displayState.readIndex % RingBufferLength;
+  for (uint32_t i = 0; i < totalLEDs && bCanRead; i++) {
+    const uint32_t stripIndex = i / LED_STRIP_LED_NUMBERS;
+    const uint32_t ledIndex   = i % LED_STRIP_LED_NUMBERS;
+    const uint32_t ledState = ledsBuffer[readIdx][stripIndex][ledIndex];
     uint8_t maxBrightness = displayState.maxBrightness;
     if (!(displayState.stripesEnable & (1 << stripIndex))) {
       continue;
@@ -228,7 +249,7 @@ static void led_strips_update(void* arg)
   if (bHoldsSemaphore) {
     if (displayState.debugFlags & DebugShowBufferPosition) {
       // show read and write index in 2 the first 2 rows
-      for (int stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
+      for (uint16_t stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
         if (displayState.readIndex == stripIndex) {
           ESP_ERROR_CHECK(led_strip_set_pixel(led_strips[stripIndex], 0, 255, 0, 0));
         }
@@ -249,9 +270,26 @@ static void led_strips_update(void* arg)
     ESP_ERROR_CHECK(led_strip_refresh(led_strips[stripIndex]));
   }
 
+  /* send heartbeat */
   if (bCanRead) {
-    displayState.readIndex = (readIndex + 1) % RingBufferLength;
+    displayState.readIndex = (displayState.readIndex + 1);
     displayState.numFrames++;
+    if (displayState.heartbeatIntervalFrames > 0 
+          && displayState.numFrames % displayState.heartbeatIntervalFrames == 0
+          && g_udp_master_address.s2_len) {
+      struct packet_heartbeat_t heartbeat = {
+        .header = {
+            .packetType = PKT_TYPE_HEARTBEAT,
+            .len        = sizeof(struct heartbeat_message_t),
+        },
+        .message = {
+            .frameId = displayState.numFrames,
+            .fps     = displayState.frameRate,
+            .heartbeatIntervalFrames = displayState.heartbeatIntervalFrames,
+        },
+      };
+      send_packet(g_socket_udp, &g_udp_master_address, &heartbeat, sizeof(heartbeat));
+    }
   } else {
     if (displayState.numFrames > 0)
       displayState.numBufferUnderrun++;
@@ -298,16 +336,6 @@ void led_display_task() {
       displayState.numLastFrames = displayState.numFrames;
       displayState.numLastCallbacks = displayState.numCallbacks;
     }
-  }
-}
-
-void send_packet(int sock, struct sockaddr_storage* dest_addr, void* message, int message_len) {
-  char tx_buffer[256];
-  memcpy(tx_buffer + sizeof(struct packet_hdr_t), message, message_len);
-  int err = sendto(sock, tx_buffer, sizeof(struct packet_hdr_t) + message_len, 0,
-                   (struct sockaddr*) dest_addr, sizeof(struct sockaddr_storage));
-  if (err < 0) {
-    ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
   }
 }
 
@@ -370,6 +398,11 @@ void handle_packet(char* rx_buffer, int len, int sock,
         displayState.debugFlags = pkt->message.value;
         ESP_LOGI(TAG, "Set debug flags to %u", displayState.debugFlags);
         break;
+      case CFG_ID_HEARTBEAT_INTERVAL_FRAMES:
+        displayState.heartbeatIntervalFrames = pkt->message.value;
+        ESP_LOGI(TAG, "Set heartbeat interval to %lu", displayState.heartbeatIntervalFrames);
+        memcpy(&g_udp_master_address, source_addr, sizeof(struct sockaddr_storage));
+        break;
       default:
         break;
     }
@@ -397,14 +430,14 @@ void handle_packet(char* rx_buffer, int len, int sock,
     // vTaskSuspendAll();
 #endif
     uint32_t* pData = (uint32_t*) pkt->message.data;
-    int writeIndex = displayState.writeIndex;
-    for (int i = 0; i < pkt->message.frameSize; i++) {
-      const int ledIndex      = pkt->message.frameOffset + i;
-      const int stripIndex    = ledIndex / LED_STRIP_LED_NUMBERS;
-      const int ledStripIndex = ledIndex % LED_STRIP_LED_NUMBERS;
-      ledsBuffer[writeIndex][stripIndex][ledStripIndex] = pData[i];
+    uint64_t writeIdx = displayState.writeIndex % RingBufferLength;
+    for (uint32_t frameIdx = 0; frameIdx < pkt->message.frameSize; frameIdx++) {
+      const uint32_t ledIndex      = pkt->message.frameOffset + frameIdx;
+      const uint32_t stripIndex    = ledIndex / LED_STRIP_LED_NUMBERS;
+      const uint32_t ledStripIndex = ledIndex % LED_STRIP_LED_NUMBERS;
+      ledsBuffer[writeIdx][stripIndex][ledStripIndex] = pData[frameIdx];
     }
-    displayState.writeIndex = (writeIndex + 1) % RingBufferLength;
+    displayState.writeIndex = (displayState.writeIndex + 1);
 #ifdef CONFIG_USE_BUFFER_SYNC
     xSemaphoreGive(xSemaphore);
     // xTaskResumeAll();
@@ -464,6 +497,7 @@ static void udp_server_task(void* pvParameters) {
     if (err < 0) {
       ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
     }
+    g_socket_udp = sock;
 
     struct sockaddr_storage source_addr;// Large enough for both IPv4 or IPv6
     socklen_t socklen = sizeof(source_addr);

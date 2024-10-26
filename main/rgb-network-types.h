@@ -11,7 +11,9 @@ enum RGBNetworkPacketType : uint8_t {
 enum RGBConfigType : uint8_t {
   CFG_ID_MAX_BRIGHTNESS = 1,
   CFG_ID_FRAME_RATE     = 2,
-  CFG_ID_STRIPES_ENABLE = 3,// bitmask of stripes to enable
+  CFG_ID_STRIPES_ENABLE = 3, // bitmask of stripes to enable
+  CFG_ID_ENABLE_DEBUG   = 4, // set debug variable (Bit 0: show buffer positions in Display)
+  CFG_ID_HEARTBEAT_INTERVAL_FRAMES = 5, // send heartbeat every n frames
   CFG_NUM_CONFIGS,
 };
 
@@ -23,6 +25,8 @@ struct packet_hdr_t {
 
 struct heartbeat_message_t {
   uint64_t frameId;
+  uint64_t fps;
+  uint64_t heartbeatIntervalFrames;
 };
 
 struct config_message_t {
