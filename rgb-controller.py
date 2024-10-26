@@ -17,6 +17,7 @@ PKT_TYPE_LED_FRAME = 2
 CFG_ID_MAX_BRIGHTNESS = 1
 CFG_ID_FRAME_RATE = 2
 CFG_ID_STRIPES_ENABLE = 3
+CFG_ID_ENABLE_DEBUG = 4
 CFG_NUM_CONFIG = 4
 
 # network settings
@@ -38,8 +39,8 @@ config_message = struct.Struct("<I I")
 led_frame_message = struct.Struct("<I I")
 
 
-FPS = 87
-MAX_BRIGHTNESS = 55
+FPS = 50
+MAX_BRIGHTNESS = 100
 frame_id = 0
 
 
@@ -50,14 +51,14 @@ def process_pixels_rainbow_circle(time_since, frame_id, state):
 
     for stripe in range(LED_NUM_STRIPES):
         for led in range(LED_NUM_LEDS_PER_STRIPE):
-            x0to1 = led / (LED_NUM_LEDS_PER_STRIPE - 1)
-            y0to1 = stripe / (LED_NUM_STRIPES - 1)
+            y0to1 = led / (LED_NUM_LEDS_PER_STRIPE - 1)
+            x0to1 = stripe / (LED_NUM_STRIPES - 1)
             # create a rainbow cirlce pattern
             # use distance from center to determine a continuous rainbow gradient circle
             dst = math.sqrt((x0to1 - 0.5) ** 2 + (y0to1 - 0.5) ** 2)
             # dst *= 1.5
-            hue = dst * 360
-            speed = 20 * 3
+            hue = dst * 360 * 1.25
+            speed = 300
             hue -= time_since * speed
             hue = -hue % 360
             # convert hue to RGB
@@ -84,7 +85,17 @@ def process_pixels_rainbow_circle(time_since, frame_id, state):
             else:
                 r = 255
                 b = (360 - hue) / 60 * 255
+            w = 255
+            col_normalized = [r/255, g/255, b/255, w/255]
+            # apply gamma correction
+            gamma = 2.2
+            for i in range(3):
+                col_normalized[i] = col_normalized[i] ** gamma
             # add RGB values to led_frame_data
+            r = int(col_normalized[0] * 255)
+            g = int(col_normalized[1] * 255)
+            b = int(col_normalized[2] * 255)
+            w = int(col_normalized[3] * 255)
             led_frame_data += struct.pack("BBBB", int(b), int(g), int(r), int(w))
     return led_frame_data
 
@@ -129,15 +140,26 @@ def main():
     config_packet += config_message.pack(CFG_ID_STRIPES_ENABLE, strip_mask)
     sock.sendto(config_packet, (LED_CONTROLLER_IP, LED_CONTROLLER_UDP_PORT))
 
+    # configure debug mode
+    config_packet = packet_hdr.pack(PKT_TYPE_CONFIG, config_message.size)
+    config_packet += config_message.pack(CFG_ID_ENABLE_DEBUG, int(1))
+    # sock.sendto(config_packet, (LED_CONTROLLER_IP, LED_CONTROLLER_UDP_PORT))
+
     time_start = time.time()
     # br = 0.25 * 255
     # set_fullscreen_color(sock, br, br, br)
     state = {}
     time_last_fps = time.time()
     num_frames = 0
-    sleep_duration_ms = (1000.0 / FPS) * 0.9
+    time_last_frame = time.time()
+    avg_fps = FPS
     while 1:
-        time_since = time.time() - time_start
+        tmNow = time.time()
+        tmDelta = tmNow - time_last_frame
+        if tmDelta < (1.0/FPS) - 0.00098:
+            time.sleep(0.001)
+            continue
+        time_since = tmNow - time_start
         led_frame_data = process_pixels_rainbow_circle(time_since, frame_id, state)
 
         size_led_frame_data = len(led_frame_data)
@@ -147,35 +169,15 @@ def main():
         led_frame_packet += led_frame_data
         # send led frame packet
         sock.sendto(led_frame_packet, (LED_CONTROLLER_IP, LED_CONTROLLER_UDP_PORT))
-
-        # sleep according to frame rate
-        time.sleep(sleep_duration_ms / 1000.0)
+        time_last_frame = tmNow
         frame_id += 1
         num_frames += 1
-        if num_frames > 4 and time.time() - time_last_fps > 2.0:
-            current_fps = num_frames / (time.time() - time_last_fps)
-            print("FPS Target", FPS, "- Current FPS", current_fps)
+        if num_frames > 4 and tmNow - time_last_fps > 5.0:
+            current_fps = num_frames / (tmNow - time_last_fps)
+            avg_fps = 0.9 * avg_fps + 0.1 * current_fps
+            print("FPS Target", FPS, "- Current FPS", current_fps, "- Avg FPS", avg_fps)
             num_frames = 0
-            time_last_fps = time.time()
-            # adapative sleep time to match frame rate
-            fps_error = current_fps - (FPS-1.0)
-            if abs(fps_error) > 1.0:
-                frametime_error_ms = ((1.0/FPS) - (1.0/current_fps)) * 1000
-                prev_sleep_duration = sleep_duration_ms
-                # sleep_duration_ms += fps_error * 1000 * 0.7
-                # adjust in millisecond steps
-                frametime_res = 0.125
-                if frametime_error_ms >= frametime_res:
-                  sleep_duration_ms += frametime_res
-                elif frametime_error_ms <= -frametime_res:
-                  sleep_duration_ms -= frametime_res
-                if sleep_duration_ms < 0.1:
-                  sleep_duration_ms = 0.1
-                if sleep_duration_ms > 1000:
-                  sleep_duration_ms = 1000
-                # if sleep_duration_ms != prev_sleep_duration:
-                #   print("Adjusting sleep duration from", prev_sleep_duration, "to", sleep_duration_ms)
-
+            time_last_fps = tmNow
 
 
 def set_fullscreen_color(sock, r, g, b):
@@ -196,4 +198,3 @@ def set_fullscreen_color(sock, r, g, b):
 
 if __name__ == "__main__":
     main()
-    print("Sent data to " + LED_CONTROLLER_IP + ":" + str(LED_CONTROLLER_UDP_PORT))

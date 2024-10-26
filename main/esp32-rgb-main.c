@@ -39,11 +39,17 @@
 static const char* TAG                              = "RGB_MAIN";
 led_strip_handle_t led_strips[LED_STRIP_NUM_STRIPS] = {};
 
+enum DebugFlags : uint8_t {
+  DebugNone = 0,
+  DebugShowBufferPosition = 1 << 0,
+};
+
 struct DisplayState {
   // display config
   uint8_t maxBrightness;
   uint16_t frameRate;
   uint32_t stripesEnable;
+  enum DebugFlags debugFlags;
   // ring buffer positions
   uint8_t readIndex;
   uint8_t writeIndex;
@@ -72,6 +78,13 @@ void reset_display_state() {
   displayState.frameRate     = 30;
   displayState.maxBrightness = 127;
   displayState.stripesEnable = ~0;
+  displayState.readIndex  = 0;
+  displayState.writeIndex = RingBufferLength / 2;
+}
+
+void reset_display_buffer_position() {
+  displayState.readIndex  = 0;
+  displayState.writeIndex = RingBufferLength / 2;
 }
 
 uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
@@ -213,6 +226,17 @@ static void led_strips_update(void* arg)
   }
 #ifdef CONFIG_USE_BUFFER_SYNC
   if (bHoldsSemaphore) {
+    if (displayState.debugFlags & DebugShowBufferPosition) {
+      // show read and write index in 2 the first 2 rows
+      for (int stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
+        if (displayState.readIndex == stripIndex) {
+          ESP_ERROR_CHECK(led_strip_set_pixel(led_strips[stripIndex], 0, 255, 0, 0));
+        }
+        if (displayState.writeIndex == stripIndex) {
+          ESP_ERROR_CHECK(led_strip_set_pixel(led_strips[stripIndex], 1, 255, 0, 0));
+        }
+      }
+    }
     xSemaphoreGive(xSemaphore);
   }
 #endif
@@ -325,6 +349,14 @@ void handle_packet(char* rx_buffer, int len, int sock,
         displayState.numBufferUnderrun = 0;
         displayState.numLastFrames = 0;
         displayState.numLastCallbacks = 0;
+#ifdef CONFIG_USE_BUFFER_SYNC
+        if (xSemaphoreTake(xSemaphore, 20)) {
+          reset_display_buffer_position();
+          xSemaphoreGive(xSemaphore);
+        }
+#else
+        reset_display_buffer_position();
+#endif // CONFIG_USE_BUFFER_SYNC
         ESP_LOGI(TAG, "Set frame rate to %u", displayState.frameRate);
         if (periodic_timer) {
           ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 1000000 / displayState.frameRate));
@@ -333,6 +365,10 @@ void handle_packet(char* rx_buffer, int len, int sock,
       case CFG_ID_STRIPES_ENABLE:
         displayState.stripesEnable = pkt->message.value;
         ESP_LOGI(TAG, "Set stripes enable to %lu", displayState.stripesEnable);
+        break;
+      case CFG_ID_ENABLE_DEBUG:
+        displayState.debugFlags = pkt->message.value;
+        ESP_LOGI(TAG, "Set debug flags to %u", displayState.debugFlags);
         break;
       default:
         break;
