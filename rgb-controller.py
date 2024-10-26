@@ -43,7 +43,7 @@ led_frame_message = struct.Struct("<I I")
 
 FPS = 80
 MAX_BRIGHTNESS = 255
-HEARTBEAT_INTERVAL = 3
+HEARTBEAT_INTERVAL = 8
 frame_id = 0
 time_start = 0
 program_state = {}
@@ -203,10 +203,10 @@ def main():
     while 1:
         tmNow = time.time()
         tmDelta = tmNow - time_last_frame
-        if tmDelta < (1.0/FPS) - 0.0008:
-            time.sleep(0.001)
-            continue
         if not USE_HEARTBEAT_FRAME_GEN:
+            if tmDelta < (1.0/FPS) - 0.0008:
+                time.sleep(0.001)
+                continue
             time_since = tmNow - time_start
             led_frame_data = process_pixels_rainbow_circle(time_since, frame_id, program_state)
 
@@ -217,6 +217,8 @@ def main():
             led_frame_packet += led_frame_data
             # send led frame packet
             sock.sendto(led_frame_packet, (LED_CONTROLLER_IP, LED_CONTROLLER_UDP_PORT))
+        else:
+            time.sleep(1)
         time_last_frame = tmNow
         frame_id += 1
         if num_frames > 4 and tmNow - time_last_fps > 5.0:
