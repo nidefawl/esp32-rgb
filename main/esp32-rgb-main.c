@@ -38,15 +38,23 @@
 
 static const char* TAG                              = "RGB_MAIN";
 led_strip_handle_t led_strips[LED_STRIP_NUM_STRIPS] = {};
-uint64_t frameId                                    = 0;
 
 struct DisplayState {
+  // display config
   uint8_t maxBrightness;
   uint16_t frameRate;
   uint32_t stripesEnable;
+  // ring buffer positions
   uint8_t readIndex;
   uint8_t writeIndex;
+  // runtime stats
+  int64_t numCallbacks;
+  int64_t numFrames;
+  int64_t numBufferUnderrun;
+  int64_t numLastCallbacks;
+  int64_t numLastFrames;
 };
+
 
 enum : uint8_t {
   RingBufferLength = 8,
@@ -54,17 +62,16 @@ enum : uint8_t {
 
 struct DisplayState displayState;
 volatile uint32_t ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_LED_NUMBERS];
-
+esp_timer_handle_t periodic_timer;
 SemaphoreHandle_t xSemaphore = NULL;
 StaticSemaphore_t xSemaphoreBuffer;
 
 void reset_display_state() {
   memset((void*)ledsBuffer, 0, sizeof(ledsBuffer));
+  memset(&displayState, 0, sizeof(displayState));
   displayState.frameRate     = 30;
   displayState.maxBrightness = 127;
   displayState.stripesEnable = ~0;
-  displayState.readIndex     = 0;
-  displayState.writeIndex    = 0;
 }
 
 uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
@@ -151,10 +158,10 @@ led_strip_handle_t configure_led(int n) {
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
       .rmt_channel = 0,
 #else
-             .clk_src       = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
-             .resolution_hz = LED_STRIP_RMT_RES_HZ,// RMT counter clock frequency
-             .flags.with_dma =
-          false,// DMA feature is available on ESP target like ESP32-S3
+      .clk_src       = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
+      .resolution_hz = LED_STRIP_RMT_RES_HZ,// RMT counter clock frequency
+      .flags.with_dma =
+      false,// DMA feature is available on ESP target like ESP32-S3
 #endif
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
@@ -175,8 +182,61 @@ led_strip_handle_t configure_led(int n) {
   return led_strip;
 }
 
-void app_led_main_loop() {
-  ESP_LOGI(TAG, "Starting LED main loop");
+static void led_strips_update(void* arg)
+{
+  const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
+  bool bHoldsSemaphore = true;
+#ifdef CONFIG_USE_BUFFER_SYNC
+  bHoldsSemaphore = xSemaphoreTake(xSemaphore, 1);
+#endif
+  const uint8_t readIndex = displayState.readIndex;
+  // check if we can read the next frame
+  bool bCanRead = bHoldsSemaphore && readIndex != displayState.writeIndex;
+  uint8_t color[4] = {};
+  for (int i = 0; i < totalLEDs && bCanRead; i++) {
+    const int stripIndex = i / LED_STRIP_LED_NUMBERS;
+    const int ledIndex   = i % LED_STRIP_LED_NUMBERS;
+    const uint32_t ledState = ledsBuffer[readIndex][stripIndex][ledIndex];
+    uint8_t maxBrightness = displayState.maxBrightness;
+    if (!(displayState.stripesEnable & (1 << stripIndex))) {
+      continue;
+    }
+    scale_and_clamp_u32(ledState, maxBrightness, color);
+#if HAS_GRBW
+    ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
+                                              color[0], color[1], color[2],
+                                              color[3]));
+#else
+    ESP_ERROR_CHECK(led_strip_set_pixel(led_strips[stripIndex], ledIndex,
+                                        color[0], color[1], color[2]));
+#endif
+  }
+#ifdef CONFIG_USE_BUFFER_SYNC
+  if (bHoldsSemaphore) {
+    xSemaphoreGive(xSemaphore);
+  }
+#endif
+
+  /* Refresh all strips */
+  for (int stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
+    if (!(displayState.stripesEnable & (1 << stripIndex))) {
+      continue;
+    }
+    ESP_ERROR_CHECK(led_strip_refresh(led_strips[stripIndex]));
+  }
+
+  if (bCanRead) {
+    displayState.readIndex = (readIndex + 1) % RingBufferLength;
+    displayState.numFrames++;
+  } else {
+    if (displayState.numFrames > 0)
+      displayState.numBufferUnderrun++;
+  }
+  displayState.numCallbacks++;
+}
+
+void led_display_task() {
+  ESP_LOGI(TAG, "Starting LED display task");
   for (int i = 0; i < LED_STRIP_NUM_STRIPS; i++) {
     led_strips[i] = configure_led(i);
     if (led_strips[i] == NULL) {
@@ -185,71 +245,35 @@ void app_led_main_loop() {
     }
     ESP_ERROR_CHECK(led_strip_clear(led_strips[i]));
   }
-  const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
-  int64_t timeLastFPS_us   = esp_timer_get_time();
-  int64_t numFrames        = 0;
+
+  const esp_timer_create_args_t periodic_timer_args = {
+    .callback = &led_strips_update,
+    .arg = NULL,
+    /* name is optional, but may help identify the timer when debugging */
+    .name = "periodic",
+    // use ISR dispatch method to call the timer callback
+    .dispatch_method = ESP_TIMER_TASK,
+    .skip_unhandled_events = true,
+  };
+  ESP_ERROR_CHECK(esp_timer_create(&periodic_timer_args, &periodic_timer));
+  ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 1000000 / displayState.frameRate));
+  int64_t timeLastFPS_us = esp_timer_get_time();
   while (1) {
-    // check if we can read the next frame
-    bool bHoldsSemaphore = true;
-#ifdef CONFIG_USE_BUFFER_SYNC
-    bHoldsSemaphore = xSemaphoreTake(xSemaphore, 1);
-#endif
-    const uint8_t readIndex = displayState.readIndex;
-    bool bCanRead = bHoldsSemaphore && readIndex != displayState.writeIndex;
-    numFrames++;
-    uint8_t color[4] = {};
-    for (int i = 0; i < totalLEDs && bCanRead; i++) {
-      const int stripIndex = i / LED_STRIP_LED_NUMBERS;
-      const int ledIndex   = i % LED_STRIP_LED_NUMBERS;
-      const uint32_t ledState = ledsBuffer[readIndex][stripIndex][ledIndex];
-      uint8_t maxBrightness = displayState.maxBrightness;
-      if (!(displayState.stripesEnable & (1 << stripIndex))) {
-        continue;
-      }
-      scale_and_clamp_u32(ledState, maxBrightness, color);
-#if HAS_GRBW
-      ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
-                                               color[0], color[1], color[2],
-                                               color[3]));
-#else
-      ESP_ERROR_CHECK(led_strip_set_pixel(led_strips[stripIndex], ledIndex,
-                                          color[0], color[1], color[2]));
-#endif
-    }
-#ifdef CONFIG_USE_BUFFER_SYNC
-    if (bHoldsSemaphore) {
-      xSemaphoreGive(xSemaphore);
-    }
-#endif
-
-    /* Refresh all strips */
-    for (int stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
-      if (!(displayState.stripesEnable & (1 << stripIndex))) {
-        continue;
-      }
-      ESP_ERROR_CHECK(led_strip_refresh(led_strips[stripIndex]));
-    }
-    const uint32_t frameDelay_ms = 1000 / displayState.frameRate;
-
-    int delay = pdMS_TO_TICKS(frameDelay_ms * 3 / 4);
-    if (delay > 0) {
-      vTaskDelay(delay);
-    }
-    if (bCanRead) {
-      displayState.readIndex = (readIndex + 1) % RingBufferLength;
-    }
-
-    // print FPS stats every 10 seconds
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    int64_t numFrames = displayState.numFrames - displayState.numLastFrames;
+    int64_t numCallbacks = displayState.numCallbacks - displayState.numLastCallbacks;
     int64_t timeSince_us = numFrames < 10 ? 0 : esp_timer_get_time() - timeLastFPS_us;
-    if (timeSince_us > 10 * 1e6) {
-      float fps = numFrames / (((float) timeSince_us) / 1e6);
-      ESP_LOGI(TAG, "FPS: %.2f", fps);
+    // print FPS stats every 5 seconds
+    if (timeSince_us > 5 * 1e6) {
+      float fps_actual = numFrames / (((float) timeSince_us) / 1e6);
+      float fps_callbacks = numCallbacks / (((float) timeSince_us) / 1e6);
+      ESP_LOGI(TAG, "Frames %lld - Dropped %lld - FPS: %.2f - CALLBACK: %.2f", 
+                displayState.numFrames, displayState.numBufferUnderrun,
+                fps_actual, fps_callbacks);
       timeLastFPS_us = esp_timer_get_time();
-      numFrames      = 0;
+      displayState.numLastFrames = displayState.numFrames;
+      displayState.numLastCallbacks = displayState.numCallbacks;
     }
-
-    // increment frame ID
-    frameId++;
   }
 }
 
@@ -275,7 +299,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
           .len        = sizeof(struct heartbeat_message_t),
       },
       .message = {
-          .frameId = frameId,
+          .frameId = displayState.numFrames,
       },
     };
     send_packet(sock, source_addr, &response, sizeof(response));
@@ -292,8 +316,19 @@ void handle_packet(char* rx_buffer, int len, int sock,
         ESP_LOGI(TAG, "Set max brightness to %u", displayState.maxBrightness);
         break;
       case CFG_ID_FRAME_RATE:
+        if (periodic_timer) {
+          ESP_ERROR_CHECK(esp_timer_stop(periodic_timer));
+        }
         displayState.frameRate = clamp_u32(pkt->message.value, 1, 10000);
+        displayState.numFrames = 0;
+        displayState.numCallbacks = 0;
+        displayState.numBufferUnderrun = 0;
+        displayState.numLastFrames = 0;
+        displayState.numLastCallbacks = 0;
         ESP_LOGI(TAG, "Set frame rate to %u", displayState.frameRate);
+        if (periodic_timer) {
+          ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 1000000 / displayState.frameRate));
+        }
         break;
       case CFG_ID_STRIPES_ENABLE:
         displayState.stripesEnable = pkt->message.value;
@@ -442,8 +477,11 @@ void app_main(void) {
   }
   xSemaphoreGive(xSemaphore);
   reset_display_state();
-  xTaskCreatePinnedToCore(app_led_main_loop, "led_main_loop", 4096, NULL, 6, NULL, 1);
+  xTaskCreatePinnedToCore(led_display_task, "led_display", 4096, NULL, 6, NULL, 1);
   ESP_ERROR_CHECK(example_connect());
   ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
   xTaskCreate(udp_server_task, "udp_server", 4096, (void*) 0, 5, NULL);
+  while (1) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
 }
