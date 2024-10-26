@@ -89,7 +89,7 @@ def process_pixels_rainbow_circle(time_since, frame_id, state):
             col_normalized = [r/255, g/255, b/255, w/255]
             # apply gamma correction
             gamma = 2.2
-            for i in range(3):
+            for i in range(4):
                 col_normalized[i] = col_normalized[i] ** gamma
             # add RGB values to led_frame_data
             r = int(col_normalized[0] * 255)
