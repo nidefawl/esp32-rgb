@@ -20,12 +20,16 @@ CFG_ID_FRAME_RATE = 2
 CFG_ID_STRIPES_ENABLE = 3
 CFG_ID_ENABLE_DEBUG = 4
 CFG_ID_HEARTBEAT_INTERVAL_FRAMES = 5
-CFG_NUM_CONFIG = 4
+CFG_NUM_CONFIG = 6
 
 # network settings
-LED_CONTROLLER_IP = "192.168.188.10"
+# LED_CONTROLLER_IP = "192.168.188.10"
+LED_CONTROLLER_IP = "fe80:0000:0000:0000:b2a7:32ff:fe16:cc24"
+# LED_CONTROLLER_IP = "fe80:0000:0000:0000:da13:2aff:fe7d:9eac"
+# LED_CONTROLLER_IP = "192.168.188.60"
 LED_CONTROLLER_UDP_PORT = 54321
-
+USE_IPV6 = False
+USE_IPV6 = True
 # packet defs relating to https://github.com/nidefawl/esp32-rgb/blob/main/main/rgb-network-types.h
 # packet header, u16 packet type, u16 packet size
 packet_hdr = struct.Struct("<H H")
@@ -43,68 +47,107 @@ led_frame_message = struct.Struct("<I I")
 
 FPS = 80
 MAX_BRIGHTNESS = 255
-HEARTBEAT_INTERVAL = 8
+HEARTBEAT_INTERVAL = 20
 frame_id = 0
 time_start = 0
 program_state = {}
 num_frames = 0
 USE_HEARTBEAT_FRAME_GEN = True
 
-def process_pixels_rainbow_circle(time_since, frame_id, state):
+# vec3 pal( in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d )
+# {
+#     return a + b*cos( 6.28318*(c*t+d) );
+# }
+# python implementation of the above GLSL function
+
+def pal(t, a, b, c, d):
+    return [a[i] + b[i] * math.cos(6.28318 * (c[i] * t + d[i])) for i in range(3)]
+
+def test_pal():
+    # vec3                col = pal( p.x, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(1.0,1.0,1.0),vec3(0.0,0.33,0.67) );
+    px = 0.5
+    val = pal(px, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [1.0, 1.0, 1.0], [0.0, 0.33, 0.67])
+    print(val)
+
+def process_static_black(time_since, frame_id, state):
     led_frame_data = led_frame_message.pack(
         LED_NUM_STRIPES * LED_NUM_LEDS_PER_STRIPE, 0
     )
 
     for stripe in range(LED_NUM_STRIPES):
         for led in range(LED_NUM_LEDS_PER_STRIPE):
-            y0to1 = led / (LED_NUM_LEDS_PER_STRIPE - 1)
-            x0to1 = stripe / (LED_NUM_STRIPES - 1)
-            # create a rainbow cirlce pattern
-            # use distance from center to determine a continuous rainbow gradient circle
-            dst = math.sqrt((x0to1 - 0.5) ** 2 + (y0to1 - 0.5) ** 2)
-            # dst *= 1.5
-            hue = dst * 360 * 1.25
-            speed = 300
-            hue -= time_since * speed
-            hue = -hue % 360
-            # convert hue to RGB
             r = 0
             g = 0
             b = 0
             w = 0
+            # add RGB values to led_frame_data
+            led_frame_data += struct.pack("BBBB", int(b), int(g), int(r), int(w))
+    return led_frame_data
 
-            if hue < 60:
-                r = 255
-                g = hue / 60 * 255
-            elif hue < 120:
-                r = (120 - hue) / 60 * 255
-                g = 255
-            elif hue < 180:
-                g = 255
-                b = (hue - 120) / 60 * 255
-            elif hue < 240:
-                g = (240 - hue) / 60 * 255
-                b = 255
-            elif hue < 300:
-                r = (hue - 240) / 60 * 255
-                b = 255
-            else:
-                r = 255
-                b = (360 - hue) / 60 * 255
-            w = 255
-            col_normalized = [r/255, g/255, b/255, w/255]
+ledrand = random.Random()
+palettes = []
+palettes.append(([0.5,0.5,0.5],[0.5,0.5,0.5],[1.0,1.0,1.0],[0.0,0.33,0.67]))
+palettes.append(([0.5,0.5,0.5],[0.5,0.5,0.5],[1.0,1.0,1.0],[0.0,0.10,0.20]))
+palettes.append(([0.5,0.5,0.5],[0.5,0.5,0.5],[1.0,1.0,1.0],[0.3,0.20,0.20]))
+palettes.append(([0.5,0.5,0.5],[0.5,0.5,0.5],[1.0,1.0,0.5],[0.8,0.90,0.30]))
+palettes.append(([0.5,0.5,0.5],[0.5,0.5,0.5],[1.0,0.7,0.4],[0.0,0.15,0.20]))
+palettes.append(([0.5,0.5,0.5],[0.5,0.5,0.5],[2.0,1.0,0.0],[0.5,0.20,0.25]))
+palettes.append(([0.8,0.5,0.4],[0.2,0.4,0.2],[2.0,1.0,1.0],[0.0,0.25,0.25]))
+
+def process_pixels_rainbow_circle(time_since, frame_id, state):
+    global ledrand
+    led_frame_data = led_frame_message.pack(
+        LED_NUM_STRIPES * LED_NUM_LEDS_PER_STRIPE, 0
+    )
+    if not "polarity" in state:
+        state["polarity"] = 1
+    speed2 = 33
+    f = math.cos(time_since * speed2 * math.pi / 180) * 0.5 + 0.5
+    f2 = math.cos(time_since * speed2 *1.1* math.pi / 180) * 0.5 + 0.5
+    f3 = math.cos(time_since * speed2 *1.01* math.pi / 180) * 0.5 + 0.5
+    f4 = math.cos(time_since * speed2 *1.05* math.pi / 180) * 0.5 + 0.5
+    for stripe in range(LED_NUM_STRIPES):
+        for led in range(LED_NUM_LEDS_PER_STRIPE):
+            y0to1 = led / (LED_NUM_LEDS_PER_STRIPE - 1)
+            x0to1 = stripe / (LED_NUM_STRIPES - 1)
+            # use distance from center to determine a continuous gradient circle
+            dst = math.sqrt((x0to1 - 0.5) ** 2 + (y0to1 - 0.5) ** 2)
+            hue = dst * 360 *  0.5
+            speed = 100.0
+            hue += time_since * speed
+            hue = hue % 360
+            idx_palette = int(time_since * 0.1) % len(palettes)
+            palette = palettes[idx_palette]
+            val = pal(hue/360.0, palette[0], palette[1], palette[2], palette[3])
+            col_normalized = val + [1.0] # add white channel
+
+            # clamp values
+            for i in range(4):
+                # if col_normalized[i] > 1.0:
+                #     print("Warning: color value out of range", col_normalized[i])
+                col_normalized[i] = max(0.0, col_normalized[i])
+
             # apply gamma correction
             gamma = 2.2
             for i in range(4):
                 col_normalized[i] = col_normalized[i] ** gamma
-            # add RGB values to led_frame_data
-            r = int(col_normalized[0] * 255)
-            g = int(col_normalized[1] * 255)
-            b = int(col_normalized[2] * 255)
-            w = int(col_normalized[3] * 255)
+
+            # clamp values
+            for i in range(4):
+                col_normalized[i] = min(1.0, max(0.0, col_normalized[i]))
+
+            # add dither noise before quantization to 8 bit
+            noise_scale = (1.0/255) * 0.5
+            for i in range(4):
+                col_normalized[i] += ledrand.uniform(-noise_scale * 0.5, noise_scale * 0.5)
+                col_normalized[i] = min(1.0, max(0.0, col_normalized[i]))
+
+            r, g, b, w = [int(col_normalized[i] * 255) for i in range(4)]
+            # r =  b = w = 0
             led_frame_data += struct.pack("BBBB", int(b), int(g), int(r), int(w))
     return led_frame_data
 
+# process_pixels_white_noise generates a white noise pattern
 def process_pixels_white_noise(time_since, frame_id, state):
     led_frame_data = led_frame_message.pack(
         LED_NUM_STRIPES * LED_NUM_LEDS_PER_STRIPE, 0
@@ -121,7 +164,7 @@ def process_pixels_white_noise(time_since, frame_id, state):
     return led_frame_data
 def gen_frame(sock, frame_id, program_state):
     # tmNow = time.time()
-    time_since = frame_id / FPS
+    time_since = (frame_id / FPS)
     led_frame_data = process_pixels_rainbow_circle(time_since, frame_id, program_state)
 
     size_led_frame_data = len(led_frame_data)
@@ -137,7 +180,6 @@ def recv_heartbeats(*args):
     global frame_id, program_state, num_frames
     sock = args[0]
     while 1:
-        # data, addr = sock.recvfrom(1024)
         # recvfrom UDP IP and port
         data, addr = sock.recvfrom(1024)
         if len(data) > heartbeat_message.size:
@@ -154,8 +196,12 @@ def recv_heartbeats(*args):
             print("Received packet with invalid size", len(data))
 def main():
     global frame_id, time_start, num_frames, program_state
+    test_pal()
     # create socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if USE_IPV6:
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    else:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # create second thread to receive heartbeats using the same socket
     thread = threading.Thread(target=recv_heartbeats, args=(sock,))
@@ -178,6 +224,7 @@ def main():
 
     # configure 10 active strips bitmask
     strip_mask = 0x3FF
+    # strip_mask = 0x3F # 6 stripes
     config_packet = packet_hdr.pack(PKT_TYPE_CONFIG, config_message.size)
     config_packet += config_message.pack(CFG_ID_STRIPES_ENABLE, strip_mask)
     sock.sendto(config_packet, (LED_CONTROLLER_IP, LED_CONTROLLER_UDP_PORT))
@@ -195,8 +242,8 @@ def main():
 
 
     time_start = time.time()
-    # br = 0.25 * 255
-    # set_fullscreen_color(sock, br, br, br)
+    br = 1.0 * 255
+    set_fullscreen_color(sock, br, br, br)
     time_last_fps = time.time()
     time_last_frame = time.time()
     avg_fps = FPS
@@ -223,7 +270,7 @@ def main():
         frame_id += 1
         if num_frames > 4 and tmNow - time_last_fps > 5.0:
             current_fps = num_frames / (tmNow - time_last_fps)
-            avg_fps = 0.9 * avg_fps + 0.1 * current_fps
+            avg_fps = 0.5 * avg_fps + 0.5 * current_fps
             print("FPS Target", FPS, "- Current FPS", current_fps, "- Avg FPS", avg_fps)
             num_frames = 0
             time_last_fps = tmNow
