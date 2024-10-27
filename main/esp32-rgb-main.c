@@ -28,7 +28,6 @@
 
 #define CONFIG_USE_IPV4 1
 #define CONFIG_USE_IPV6 1
-#define CONFIG_USE_BUFFER_SYNC
 
 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
 #define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000)
@@ -227,10 +226,7 @@ void send_packet(int sock, struct sockaddr_storage* dest_addr, void* message, in
 static void led_strips_update(void* arg)
 {
   const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
-  bool bHoldsSemaphore = true;
-#ifdef CONFIG_USE_BUFFER_SYNC
-  bHoldsSemaphore = xSemaphoreTake(semaphoreDisplay, 1);
-#endif
+  bool bHoldsSemaphore = xSemaphoreTake(semaphoreDisplay, 1);
   // check if we can read the next frame
   bool bCanRead = bHoldsSemaphore && displayState.readIndex < displayState.writeIndex;
   uint8_t color[4] = {};
@@ -253,7 +249,11 @@ static void led_strips_update(void* arg)
                                         color[0], color[1], color[2]));
 #endif
   }
-#ifdef CONFIG_USE_BUFFER_SYNC
+
+  if (bCanRead) {
+    displayState.readIndex = (displayState.readIndex + 1);
+  }
+
   if (bHoldsSemaphore) {
     if (displayState.debugFlags & DebugShowBufferPosition) {
       // show read and write index in 2 the first 2 rows
@@ -268,7 +268,6 @@ static void led_strips_update(void* arg)
     }
     xSemaphoreGive(semaphoreDisplay);
   }
-#endif
 
   /* Refresh all strips */
   for (int stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
@@ -278,10 +277,8 @@ static void led_strips_update(void* arg)
     ESP_ERROR_CHECK(led_strip_refresh(led_strips[stripIndex]));
   }
 
-  /* send heartbeat */
   if (bCanRead) {
-    displayState.readIndex = (displayState.readIndex + 1);
-    displayState.numFrames++;
+    /* send heartbeat */
     if (displayState.heartbeatIntervalFrames > 0 
           && displayState.numFrames % displayState.heartbeatIntervalFrames == 0
           && g_udp_master_address.s2_len) {
@@ -296,8 +293,11 @@ static void led_strips_update(void* arg)
             .heartbeatIntervalFrames = displayState.heartbeatIntervalFrames,
         },
       };
-      send_packet(g_socket_udp, &g_udp_master_address, &heartbeat, sizeof(heartbeat));
+      if (g_socket_udp != -1) {
+        send_packet(g_socket_udp, &g_udp_master_address, &heartbeat, sizeof(heartbeat));
+      }
     }
+    displayState.numFrames++;
   } else {
     if (displayState.numFrames > 0)
       displayState.numBufferUnderrun++;
@@ -332,7 +332,7 @@ void led_display_task() {
     vTaskDelay(pdMS_TO_TICKS(1000));
     int64_t numFrames = displayState.numFrames - displayState.numLastFrames;
     int64_t numCallbacks = displayState.numCallbacks - displayState.numLastCallbacks;
-    int64_t timeSince_us = numFrames < 10 ? 0 : esp_timer_get_time() - timeLastFPS_us;
+    int64_t timeSince_us = esp_timer_get_time() - timeLastFPS_us;
     // print FPS stats every 5 seconds
     if (timeSince_us > 5 * 1e6) {
       float fps_actual = numFrames / (((float) timeSince_us) / 1e6);
@@ -360,6 +360,8 @@ void handle_packet(char* rx_buffer, int len, int sock,
       },
       .message = {
           .frameId = displayState.numFrames,
+          .fps     = displayState.frameRate,
+          .heartbeatIntervalFrames = displayState.heartbeatIntervalFrames,
       },
     };
     send_packet(sock, source_addr, &response, sizeof(response));
@@ -380,14 +382,10 @@ void handle_packet(char* rx_buffer, int len, int sock,
           ESP_ERROR_CHECK(esp_timer_stop(periodic_timer));
         }
         displayState.frameRate = clamp_u32(pkt->message.value, 1, 10000);
-#ifdef CONFIG_USE_BUFFER_SYNC
         if (xSemaphoreTake(semaphoreDisplay, 20)) {
           reset_display_buffer_position();
           xSemaphoreGive(semaphoreDisplay);
         }
-#else
-        reset_display_buffer_position();
-#endif // CONFIG_USE_BUFFER_SYNC
         ESP_LOGI(TAG, "Set frame rate to %u", displayState.frameRate);
         if (periodic_timer) {
           ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 1000000 / displayState.frameRate));
@@ -426,12 +424,9 @@ void handle_packet(char* rx_buffer, int len, int sock,
       return;
     }
 
-#ifdef CONFIG_USE_BUFFER_SYNC
     if (!xSemaphoreTake(semaphoreDisplay, (TickType_t) 10)) {
       return;
     }
-    // vTaskSuspendAll();
-#endif
     uint32_t* pData = (uint32_t*) pkt->message.data;
     uint64_t writeIdx = displayState.writeIndex % RingBufferLength;
     for (uint32_t frameIdx = 0; frameIdx < pkt->message.frameSize; frameIdx++) {
@@ -441,10 +436,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
       ledsBuffer[writeIdx][stripIndex][ledStripIndex] = pData[frameIdx];
     }
     displayState.writeIndex = (displayState.writeIndex + 1);
-#ifdef CONFIG_USE_BUFFER_SYNC
     xSemaphoreGive(semaphoreDisplay);
-    // xTaskResumeAll();
-#endif
   }
 }
 
@@ -572,12 +564,10 @@ void app_main(void) {
       close(s_socket);
       s_socket = -1;
     }
-#ifdef CONFIG_USE_BUFFER_SYNC
     if (xSemaphoreTake(semaphoreDisplay, portMAX_DELAY)) {
       reset_display_buffer_position();
       xSemaphoreGive(semaphoreDisplay);
     }
-#endif
     ESP_LOGI(TAG, "Network restarted");
   }
 }
