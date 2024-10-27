@@ -12,7 +12,7 @@
 #include "led_strip_types.h"
 #include "nvs_flash.h"
 #include "portmacro.h"
-#include "protocol_examples_common.h"
+#include "network.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,7 +26,8 @@
 #include "rgb-network-types.h"
 #include <lwip/netdb.h>
 
-#define CONFIG_USE_IPV4
+#define CONFIG_USE_IPV4 1
+#define CONFIG_USE_IPV6 1
 #define CONFIG_USE_BUFFER_SYNC
 
 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
@@ -72,8 +73,10 @@ enum : uint16_t {
 struct DisplayState displayState;
 volatile uint32_t ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_LED_NUMBERS];
 esp_timer_handle_t periodic_timer;
-SemaphoreHandle_t xSemaphore = NULL;
-StaticSemaphore_t xSemaphoreBuffer;
+SemaphoreHandle_t semaphoreDisplay = NULL;
+StaticSemaphore_t s_semaphoreDisplay;
+SemaphoreHandle_t semaphoreNetwork = NULL;
+StaticSemaphore_t s_semaphoreNetwork;
 int g_socket_udp = -1;
 struct sockaddr_storage g_udp_master_address = {};
 
@@ -92,6 +95,11 @@ void reset_display_state() {
 void reset_display_buffer_position() {
   displayState.readIndex  = 0;
   displayState.writeIndex = RingBufferLength / 2;
+  displayState.numFrames = 0;
+  displayState.numCallbacks = 0;
+  displayState.numBufferUnderrun = 0;
+  displayState.numLastFrames = 0;
+  displayState.numLastCallbacks = 0;
 }
 
 uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
@@ -221,7 +229,7 @@ static void led_strips_update(void* arg)
   const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
   bool bHoldsSemaphore = true;
 #ifdef CONFIG_USE_BUFFER_SYNC
-  bHoldsSemaphore = xSemaphoreTake(xSemaphore, 1);
+  bHoldsSemaphore = xSemaphoreTake(semaphoreDisplay, 1);
 #endif
   // check if we can read the next frame
   bool bCanRead = bHoldsSemaphore && displayState.readIndex < displayState.writeIndex;
@@ -258,7 +266,7 @@ static void led_strips_update(void* arg)
         }
       }
     }
-    xSemaphoreGive(xSemaphore);
+    xSemaphoreGive(semaphoreDisplay);
   }
 #endif
 
@@ -372,15 +380,10 @@ void handle_packet(char* rx_buffer, int len, int sock,
           ESP_ERROR_CHECK(esp_timer_stop(periodic_timer));
         }
         displayState.frameRate = clamp_u32(pkt->message.value, 1, 10000);
-        displayState.numFrames = 0;
-        displayState.numCallbacks = 0;
-        displayState.numBufferUnderrun = 0;
-        displayState.numLastFrames = 0;
-        displayState.numLastCallbacks = 0;
 #ifdef CONFIG_USE_BUFFER_SYNC
-        if (xSemaphoreTake(xSemaphore, 20)) {
+        if (xSemaphoreTake(semaphoreDisplay, 20)) {
           reset_display_buffer_position();
-          xSemaphoreGive(xSemaphore);
+          xSemaphoreGive(semaphoreDisplay);
         }
 #else
         reset_display_buffer_position();
@@ -424,7 +427,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
     }
 
 #ifdef CONFIG_USE_BUFFER_SYNC
-    if (!xSemaphoreTake(xSemaphore, (TickType_t) 10)) {
+    if (!xSemaphoreTake(semaphoreDisplay, (TickType_t) 10)) {
       return;
     }
     // vTaskSuspendAll();
@@ -439,7 +442,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
     }
     displayState.writeIndex = (displayState.writeIndex + 1);
 #ifdef CONFIG_USE_BUFFER_SYNC
-    xSemaphoreGive(xSemaphore);
+    xSemaphoreGive(semaphoreDisplay);
     // xTaskResumeAll();
 #endif
   }
@@ -447,6 +450,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
 
 
 char udp_rx_buffer[4096];
+int s_socket = -1;
 static void udp_server_task(void* pvParameters) {
   char addr_str[128];
 #if CONFIG_USE_IPV6
@@ -456,8 +460,8 @@ static void udp_server_task(void* pvParameters) {
 #endif
   int ip_protocol = 0;
   struct sockaddr_in6 dest_addr;
-
   while (1) {
+    bzero(&dest_addr, sizeof(dest_addr));
     if (addr_family == AF_INET) {
       struct sockaddr_in* dest_addr_ip4 = (struct sockaddr_in*) &dest_addr;
       dest_addr_ip4->sin_addr.s_addr    = htonl(INADDR_ANY);
@@ -465,14 +469,20 @@ static void udp_server_task(void* pvParameters) {
       dest_addr_ip4->sin_port           = htons(LED_UDP_LISTEN_PORT);
       ip_protocol                       = IPPROTO_IP;
     } else if (addr_family == AF_INET6) {
-      bzero(&dest_addr.sin6_addr.un, sizeof(dest_addr.sin6_addr.un));
       dest_addr.sin6_family = AF_INET6;
       dest_addr.sin6_port   = htons(LED_UDP_LISTEN_PORT);
       ip_protocol           = IPPROTO_IPV6;
     }
 
-    int sock = socket(addr_family, SOCK_DGRAM, ip_protocol);
-    if (sock < 0) {
+    if (s_socket != -1) {
+      ESP_LOGE(TAG, "Shutting down socket and restarting...");
+      shutdown(s_socket, 0);
+      close(s_socket);
+      s_socket = -1;
+    }
+
+    s_socket = socket(addr_family, SOCK_DGRAM, ip_protocol);
+    if (s_socket < 0) {
       ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
       break;
     }
@@ -482,28 +492,30 @@ static void udp_server_task(void* pvParameters) {
       // Note that by default IPV6 binds to both protocols, it is must be
       // disabled if both protocols used at the same time (used in CI)
       int opt = 1;
-      setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-      setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
+      setsockopt(s_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+      // setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
     }
 #endif
 
     // Set infinite timeout
     struct timeval timeout;
+    bzero(&timeout, sizeof(timeout));
     timeout.tv_sec  = 0;
     timeout.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+    setsockopt(s_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 
-    int err = bind(sock, (struct sockaddr*) &dest_addr, sizeof(dest_addr));
+    int err = bind(s_socket, (struct sockaddr*) &dest_addr, sizeof(dest_addr));
     if (err < 0) {
       ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
     }
-    g_socket_udp = sock;
+    g_socket_udp = s_socket;
 
     struct sockaddr_storage source_addr;// Large enough for both IPv4 or IPv6
     socklen_t socklen = sizeof(source_addr);
 
-    while (1) {
-      int len = recvfrom(sock, udp_rx_buffer, sizeof(udp_rx_buffer), 0,
+    while (s_socket >= 0) {
+      bzero(&source_addr, sizeof(source_addr));
+      ssize_t len = recvfrom(s_socket, udp_rx_buffer, sizeof(udp_rx_buffer), 0,
                          (struct sockaddr*) &source_addr, &socklen);
       if (len < 0) {
         ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
@@ -524,34 +536,48 @@ static void udp_server_task(void* pvParameters) {
         ESP_LOGI(TAG, "rx_buffer[%d] = 0x%02x", i, rx_buffer[i]);
       } */
 
-      handle_packet(udp_rx_buffer, len, sock, &source_addr);
-    }
-
-    if (sock != -1) {
-      ESP_LOGE(TAG, "Shutting down socket and restarting...");
-      shutdown(sock, 0);
-      close(sock);
+      handle_packet(udp_rx_buffer, len, s_socket, &source_addr);
     }
   }
-  vTaskDelete(NULL);
 }
 
 void app_main(void) {
   ESP_ERROR_CHECK(nvs_flash_init());
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
-  xSemaphore = xSemaphoreCreateBinaryStatic(&xSemaphoreBuffer);
-  if (xSemaphore == NULL) {
+  semaphoreDisplay = xSemaphoreCreateBinaryStatic(&s_semaphoreDisplay);
+  if (semaphoreDisplay == NULL) {
     ESP_LOGE(TAG, "Failed to create semaphore");
     return;
   }
-  xSemaphoreGive(xSemaphore);
+  semaphoreNetwork = xSemaphoreCreateBinaryStatic(&s_semaphoreNetwork);
+  if (semaphoreNetwork == NULL) {
+    ESP_LOGE(TAG, "Failed to create semaphore");
+    return;
+  }
+  xSemaphoreGive(semaphoreDisplay);
   reset_display_state();
   xTaskCreatePinnedToCore(led_display_task, "led_display", 4096, NULL, 6, NULL, 1);
-  ESP_ERROR_CHECK(example_connect());
+  ESP_ERROR_CHECK(network_connect());
   ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
   xTaskCreate(udp_server_task, "udp_server", 4096, (void*) 0, 5, NULL);
   while (1) {
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    xSemaphoreTake(semaphoreNetwork, portMAX_DELAY);
+    // wait for a second notification (IP6), but only for 5 seconds
+    xSemaphoreTake(semaphoreNetwork, pdMS_TO_TICKS(5000));
+    // log network restart
+    ESP_LOGI(TAG, "Network restart...");
+    if (s_socket != -1) {
+      shutdown(s_socket, 0);
+      close(s_socket);
+      s_socket = -1;
+    }
+#ifdef CONFIG_USE_BUFFER_SYNC
+    if (xSemaphoreTake(semaphoreDisplay, portMAX_DELAY)) {
+      reset_display_buffer_position();
+      xSemaphoreGive(semaphoreDisplay);
+    }
+#endif
+    ESP_LOGI(TAG, "Network restarted");
   }
 }
