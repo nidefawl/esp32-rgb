@@ -75,7 +75,7 @@ esp_timer_handle_t periodic_timer;
 SemaphoreHandle_t semaphoreDisplay = NULL;
 StaticSemaphore_t s_semaphoreDisplay;
 SemaphoreHandle_t semaphoreNetwork = NULL;
-StaticSemaphore_t s_semaphoreNetwork;
+SemaphoreHandle_t semaphoreSocketStart = NULL;
 int g_socket_udp = -1;
 struct sockaddr_storage g_udp_master_address = {};
 
@@ -453,6 +453,7 @@ static void udp_server_task(void* pvParameters) {
   int ip_protocol = 0;
   struct sockaddr_in6 dest_addr;
   while (1) {
+    xSemaphoreTake(semaphoreSocketStart, portMAX_DELAY);
     bzero(&dest_addr, sizeof(dest_addr));
     if (addr_family == AF_INET) {
       struct sockaddr_in* dest_addr_ip4 = (struct sockaddr_in*) &dest_addr;
@@ -465,7 +466,6 @@ static void udp_server_task(void* pvParameters) {
       dest_addr.sin6_port   = htons(LED_UDP_LISTEN_PORT);
       ip_protocol           = IPPROTO_IPV6;
     }
-
     if (s_socket != -1) {
       ESP_LOGE(TAG, "Shutting down socket and restarting...");
       shutdown(s_socket, 0);
@@ -538,12 +538,9 @@ void app_main(void) {
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   semaphoreDisplay = xSemaphoreCreateBinaryStatic(&s_semaphoreDisplay);
-  if (semaphoreDisplay == NULL) {
-    ESP_LOGE(TAG, "Failed to create semaphore");
-    return;
-  }
-  semaphoreNetwork = xSemaphoreCreateBinaryStatic(&s_semaphoreNetwork);
-  if (semaphoreNetwork == NULL) {
+  semaphoreNetwork = xSemaphoreCreateCounting(2, 0);
+  semaphoreSocketStart = xSemaphoreCreateBinary();
+  if (semaphoreNetwork == NULL || semaphoreDisplay == NULL || semaphoreSocketStart == NULL) {
     ESP_LOGE(TAG, "Failed to create semaphore");
     return;
   }
@@ -568,6 +565,7 @@ void app_main(void) {
       reset_display_buffer_position();
       xSemaphoreGive(semaphoreDisplay);
     }
+    xSemaphoreGive(semaphoreSocketStart);
     ESP_LOGI(TAG, "Network restarted");
   }
 }
