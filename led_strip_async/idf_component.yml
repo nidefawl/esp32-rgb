@@ -1,0 +1,8 @@
+dependencies:
+  idf: '>=4.4'
+description: Driver for Addressable LED Strip (WS2812, etc)
+repository: git://github.com/nidefawl/esp32-rgb.git
+repository_info:
+  path: led_strip_async
+url: https://github.com/nidefawl/esp32-rgb/tree/main/main/led_strip_async
+version: 2.5.5

@@ -275,7 +275,14 @@ static void led_strips_update(void* arg)
     if (!(displayState.stripesEnable & (1 << stripIndex))) {
       continue;
     }
-    ESP_ERROR_CHECK(led_strip_refresh(led_strips[stripIndex]));
+    ESP_ERROR_CHECK(led_strip_refresh_begin(led_strips[stripIndex]));
+  }
+
+  for (int stripIndex = 0; stripIndex < LED_STRIP_NUM_STRIPS; stripIndex++) {
+    if (!(displayState.stripesEnable & (1 << stripIndex))) {
+      continue;
+    }
+    ESP_ERROR_CHECK(led_strip_refresh_end(led_strips[stripIndex]));
   }
 
   if (bCanRead) {
