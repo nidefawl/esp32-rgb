@@ -25,6 +25,7 @@
 #include "lwip/sys.h"
 #include "rgb-network-types.h"
 #include <lwip/netdb.h>
+#include "driver/ledc.h"
 
 #define CONFIG_USE_IPV4 1
 #define CONFIG_USE_IPV6 1
@@ -33,7 +34,7 @@
 #define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000)
 #define LED_STRIP_HAS_GRBW 0
 #define LED_STRIP_NUM_STRIPS 10
-#define LED_STRIP_LED_NUMBERS 30
+#define LED_STRIP_NUM_LEDS_PER_STRIP 30
 
 #define LED_UDP_LISTEN_PORT 54321
 
@@ -70,7 +71,7 @@ enum : uint16_t {
 };
 
 struct DisplayState displayState;
-volatile uint32_t ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_LED_NUMBERS];
+volatile uint32_t ledsBuffer[RingBufferLength][LED_STRIP_NUM_STRIPS][LED_STRIP_NUM_LEDS_PER_STRIP];
 esp_timer_handle_t periodic_timer;
 SemaphoreHandle_t semaphoreDisplay = NULL;
 StaticSemaphore_t s_semaphoreDisplay;
@@ -166,8 +167,8 @@ led_strip_handle_t configure_led(int n) {
   // LED strip general initialization, according to your led board design
   led_strip_config_t strip_config = {
     .strip_gpio_num = gpio,                 // The GPIO that connected to the LED strip's data line
-    .max_leds       = LED_STRIP_LED_NUMBERS,// The number of LEDs in the strip,
-#if HAS_GRBW
+    .max_leds       = LED_STRIP_NUM_LEDS_PER_STRIP,// The number of LEDs in the strip,
+#if LED_STRIP_HAS_GRBW
     .led_pixel_format = LED_PIXEL_FORMAT_GRBW,// Pixel format of your LED strip
     .led_model        = LED_MODEL_SK6812,     // LED strip model
 #else
@@ -225,22 +226,22 @@ void send_packet(int sock, struct sockaddr_storage* dest_addr, void* message, in
 
 static void led_strips_update(void* arg)
 {
-  const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS;
+  const uint32_t totalLEDs = LED_STRIP_NUM_STRIPS * LED_STRIP_NUM_LEDS_PER_STRIP;
   bool bHoldsSemaphore = xSemaphoreTake(semaphoreDisplay, 1);
   // check if we can read the next frame
   bool bCanRead = bHoldsSemaphore && displayState.readIndex < displayState.writeIndex;
   uint8_t color[4] = {};
   const uint64_t readIdx = displayState.readIndex % RingBufferLength;
   for (uint32_t i = 0; i < totalLEDs && bCanRead; i++) {
-    const uint32_t stripIndex = i / LED_STRIP_LED_NUMBERS;
-    const uint32_t ledIndex   = i % LED_STRIP_LED_NUMBERS;
+    const uint32_t stripIndex = i / LED_STRIP_NUM_LEDS_PER_STRIP;
+    const uint32_t ledIndex   = i % LED_STRIP_NUM_LEDS_PER_STRIP;
     const uint32_t ledState = ledsBuffer[readIdx][stripIndex][ledIndex];
     uint8_t maxBrightness = displayState.maxBrightness;
     if (!(displayState.stripesEnable & (1 << stripIndex))) {
       continue;
     }
     scale_and_clamp_u32(ledState, maxBrightness, color);
-#if HAS_GRBW
+#if LED_STRIP_HAS_GRBW
     ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
                                               color[0], color[1], color[2],
                                               color[3]));
@@ -410,7 +411,7 @@ void handle_packet(char* rx_buffer, int len, int sock,
   } else if (hdr->packetType == PKT_TYPE_LED_FRAME) {
     struct packet_led_frame_t* pkt = (struct packet_led_frame_t*) rx_buffer;
     if (pkt->message.frameOffset + pkt->message.frameSize >
-        LED_STRIP_NUM_STRIPS * LED_STRIP_LED_NUMBERS) {
+        LED_STRIP_NUM_STRIPS * LED_STRIP_NUM_LEDS_PER_STRIP) {
       ESP_LOGE(TAG, "Invalid frame offset %lu and size %lu",
                pkt->message.frameOffset, pkt->message.frameSize);
       return;
@@ -431,8 +432,8 @@ void handle_packet(char* rx_buffer, int len, int sock,
     uint64_t writeIdx = displayState.writeIndex % RingBufferLength;
     for (uint32_t frameIdx = 0; frameIdx < pkt->message.frameSize; frameIdx++) {
       const uint32_t ledIndex      = pkt->message.frameOffset + frameIdx;
-      const uint32_t stripIndex    = ledIndex / LED_STRIP_LED_NUMBERS;
-      const uint32_t ledStripIndex = ledIndex % LED_STRIP_LED_NUMBERS;
+      const uint32_t stripIndex    = ledIndex / LED_STRIP_NUM_LEDS_PER_STRIP;
+      const uint32_t ledStripIndex = ledIndex % LED_STRIP_NUM_LEDS_PER_STRIP;
       ledsBuffer[writeIdx][stripIndex][ledStripIndex] = pData[frameIdx];
     }
     displayState.writeIndex = (displayState.writeIndex + 1);
