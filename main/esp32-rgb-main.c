@@ -34,8 +34,6 @@
 #define CONFIG_MAX_LEDS 30
 #define CONFIG_USE_ASYNC_RMT 1
 
-// 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
-#define LED_STRIP_RMT_RES_HZ (8 * 1000 * 1000)
 #define LED_UDP_LISTEN_PORT 54321
 
 #define STORAGE_NAMESPACE "esp32-rgb"
@@ -97,8 +95,16 @@ void display_buffer_position_reset() {
   displayState.numLastCallbacks = 0;
   displayState.numHeartbeats = 0;
 }
-
+#define DISPLAY_CONFIG_VERSION 1
 bool display_config_validate(display_config_t* config) {
+  if (config->version < 1) {
+    ESP_LOGE(TAG, "Invalid version");
+    return false;
+  }
+  if (config->magic != DISPLAY_CONFIG_MAGIC) {
+    ESP_LOGE(TAG, "Invalid magic");
+    return false;
+  }
   if (config->dimensionsWidth < 1 || config->dimensionsHeight < 1
       || config->dimensionsWidth > CONFIG_MAX_STRIPS || config->dimensionsHeight > CONFIG_MAX_LEDS) {
     ESP_LOGE(TAG, "Invalid display dimensions");
@@ -112,6 +118,9 @@ bool display_config_validate(display_config_t* config) {
 }
 
 void display_config_reset(display_config_t* config) {
+  config->version = DISPLAY_CONFIG_VERSION;
+  config->magic = DISPLAY_CONFIG_MAGIC;
+  config->rmtClockResolution_hz = 10000000; // 10MHz
   config->dimensionsWidth = 10;
   config->dimensionsHeight = 30;
   config->maxBrightness = 127;
@@ -122,6 +131,9 @@ void display_config_reset(display_config_t* config) {
 }
 void display_strips_init();
 void log_display_config(display_config_t* config) {
+  ESP_LOGI(TAG, "Version: %lu", config->version);
+  ESP_LOGI(TAG, "Magic: %lu", config->magic);
+  ESP_LOGI(TAG, "ClockResolution: %lu -> %lu", displayConfig.rmtClockResolution_hz, config->rmtClockResolution_hz);
   ESP_LOGI(TAG, "Width: %lu -> %lu", displayConfig.dimensionsWidth, config->dimensionsWidth);
   ESP_LOGI(TAG, "Height: %lu -> %lu", displayConfig.dimensionsHeight, config->dimensionsHeight);
   ESP_LOGI(TAG, "FrameRate: %u -> %u", displayConfig.frameRate, config->frameRate);
@@ -286,15 +298,15 @@ led_strip_handle_t display_led_strip_configure(uint32_t stripIndex) {
   led_strip_config_t strip_config = {
     .strip_gpio_num = gpio,                     // The GPIO that connected to the LED strip's data line
     .max_leds       = config->dimensionsHeight, // Number of LEDs in your strip
-#if LED_STRIP_HAS_GRBW
-    .led_pixel_format = LED_PIXEL_FORMAT_GRBW,// Pixel format of your LED strip
-    .led_model        = LED_MODEL_SK6812,     // LED strip model
-#else
     .led_pixel_format = LED_PIXEL_FORMAT_GRB, // Pixel format of your LED strip
     .led_model        = LED_MODEL_WS2812,     // LED strip model
-#endif
     .flags.invert_out = false,// whether to invert the output signal
   };
+  
+  if (config->isRGBW) {
+    strip_config.led_pixel_format = LED_PIXEL_FORMAT_GRBW;
+    strip_config.led_model        = LED_MODEL_SK6812;
+  }
 
   // LED Strip object handle
   led_strip_handle_t led_strip;
@@ -305,13 +317,14 @@ led_strip_handle_t display_led_strip_configure(uint32_t stripIndex) {
       .rmt_channel = 0,
 #else
       .clk_src       = RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
-      .resolution_hz = LED_STRIP_RMT_RES_HZ,// RMT counter clock frequency
+      .resolution_hz = config->rmtClockResolution_hz,// RMT counter clock frequency
       .flags.with_dma =
       false,// DMA feature is available on ESP target like ESP32-S3
 #endif
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
-    ESP_LOGI(TAG, "Created LED strip object with RMT backend");
+    ESP_LOGI(TAG, "Created LED strip object with RMT backend (GPIO %ld) (PixelFormat %s)", gpio,
+             config->isRGBW ? "GRBW" : "GRB");
   } else if (stripIndex < 10) {
     // LED strip backend configuration: SPI
     led_strip_spi_config_t spi_config = {
@@ -374,7 +387,7 @@ static void display_strips_update(void* arg)
       uint8_t maxBrightness = displayConfig.maxBrightness;
       scale_and_clamp_u32(ledState, maxBrightness, color);
       if (displayConfig.isRGBW) {
-      ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
+        ESP_ERROR_CHECK(led_strip_set_pixel_rgbw(led_strips[stripIndex], ledIndex,
                                                 color[0], color[1], color[2],
                                                 color[3]));
       } else {
@@ -559,6 +572,15 @@ void handle_packet(char* rx_buffer, int len, int sock,
         ESP_LOGI(TAG, "Enabled heartbeat. Destination host: %s", addr_str);
       }
     }
+  } else if (hdr->packetType == PKT_TYPE_READ_CONFIG) {
+    struct packet_config_all_t readConfig = {
+      .header = {
+          .packetType = PKT_TYPE_CONFIG_ALL,
+          .len        = sizeof(struct config_message_t),
+      },
+      .message = displayConfig,
+    };
+    send_packet(sock, source_addr, &readConfig, sizeof(readConfig));
   } else if (hdr->packetType == PKT_TYPE_CONFIG_ALL) {
     struct packet_config_all_t* pkt = (struct packet_config_all_t*) rx_buffer;
     if (display_config_validate(&pkt->message)) {

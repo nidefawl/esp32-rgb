@@ -8,6 +8,7 @@ enum RGBNetworkPacketType : uint8_t {
   PKT_TYPE_LED_FRAME     = 3,
   PKT_TYPE_RUNTIME_STATS = 4,
   PKT_TYPE_REQUEST_HEARTBEAT = 5,
+  PKT_TYPE_READ_CONFIG   = 6,
   PKT_NUM_TYPES,
 };
 
@@ -32,8 +33,11 @@ struct heartbeat_message_t {
   uint32_t frameId;
   uint32_t bufferFillLevel;
 };
-
+#define DISPLAY_CONFIG_MAGIC 0x12345678
 typedef struct {
+  uint32_t version;
+  uint32_t magic;
+  uint32_t rmtClockResolution_hz;
   uint32_t dimensionsWidth;
   uint32_t dimensionsHeight;
   uint32_t heartbeatIntervalFrames;
