@@ -1,14 +1,20 @@
 #pragma once
 #include <stdint.h>
+#define DISPLAY_CONFIG_MAGIC 0x12345678
+#define CONFIG_MAX_STRIPS 10
 
 enum RGBNetworkPacketType : uint8_t {
-  PKT_TYPE_HEARTBEAT     = 0,
-  PKT_TYPE_CONFIG_ALL    = 1,
-  PKT_TYPE_CONFIG_SINGLE = 2,
-  PKT_TYPE_LED_FRAME     = 3,
-  PKT_TYPE_RUNTIME_STATS = 4,
-  PKT_TYPE_REQUEST_HEARTBEAT = 5,
-  PKT_TYPE_READ_CONFIG   = 6,
+  PKT_TYPE_HEARTBEAT              = 0,
+  PKT_TYPE_CONFIG_ALL             = 1,
+  PKT_TYPE_CONFIG_SINGLE          = 2,
+  PKT_TYPE_LED_FRAME              = 3,
+  PKT_TYPE_RUNTIME_STATS          = 4,
+  PKT_TYPE_REQUEST_HEARTBEAT      = 5,
+  PKT_TYPE_READ_CONFIG            = 6,
+  PKT_TYPE_READ_STRIP_CONFIG_ALL  = 7,
+  PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8,
+  PKT_TYPE_READ_NETWORK_CONFIG    = 9,
+  PKT_TYPE_WRITE_NETWORK_CONFIG   = 10,
   PKT_NUM_TYPES,
 };
 
@@ -23,6 +29,22 @@ enum RGBConfigType : uint8_t {
   CFG_NUM_CONFIGS,
 };
 
+enum RGBDataType : uint8_t {
+  RGB_DATA_TYPE_RGB = 0,
+  RGB_DATA_TYPE_RGBW = 1,
+};
+
+enum LEDType : uint8_t {
+  LED_TYPE_WS2812B = 0,
+  LED_TYPE_SK6812 = 1,
+};
+
+enum WifiMode : uint8_t {
+  NETWORK_WIFI_MODE_AP = 0,
+  NETWORK_WIFI_MODE_STA = 1,
+  NUM_NETWORK_WIFI_MODES,
+};
+
 #pragma pack(push, 2)
 struct packet_hdr_t {
   uint16_t packetType;
@@ -33,7 +55,6 @@ struct heartbeat_message_t {
   uint32_t frameId;
   uint32_t bufferFillLevel;
 };
-#define DISPLAY_CONFIG_MAGIC 0x12345678
 typedef struct {
   uint32_t version;
   uint32_t magic;
@@ -45,8 +66,33 @@ typedef struct {
   uint32_t debugFlags;
   uint16_t frameRate;
   uint8_t maxBrightness;
-  uint8_t isRGBW;
 } display_config_t;
+
+typedef struct {
+  int16_t gpio;
+  uint16_t ledCount;
+  uint8_t ledType;    // 0: RGB (WS2812B), 1: RGBW (SK6812)
+  uint8_t dataTypeId; // 0: RGB (3 bytes), 1: RGBW (4 bytes)
+} display_led_strip_config_t;
+
+typedef struct {
+  uint32_t version;
+  uint32_t magic;
+  display_led_strip_config_t configs[CONFIG_MAX_STRIPS];
+} display_led_strip_config_all_t;
+
+typedef struct {
+  uint32_t version;
+  uint32_t magic;
+  uint16_t port;
+  uint8_t wifiMode;
+  uint8_t reserved[5];
+  char hostname[64];
+  char apWifiSsid[32];
+  char apWifiPassword[64];
+  char staWifiSsid[32];
+  char staWifiPassword[64];
+} display_network_config_t;
 
 struct runtime_stats_t
 {
@@ -110,6 +156,14 @@ struct packet_request_heartbeat_t {
 struct packet_runtime_stats_t {
   struct packet_hdr_t header;
   struct runtime_stats_t message;
+};
+struct packet_strip_config_all_t {
+  struct packet_hdr_t header;
+  display_led_strip_config_all_t message;
+};
+struct packet_network_config_t {
+  struct packet_hdr_t header;
+  display_network_config_t message;
 };
 
 #pragma pack(pop)

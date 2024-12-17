@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 RGB - inserthostname</title>
+    <!-- <link rel="preconnect" href="https://fonts.googleapis.com"> -->
+    <!-- <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> -->
+    <!-- <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Display:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet"> -->
+    <link rel="stylesheet" href="style.css">
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script> -->
+    <script type="text/javascript">
+      
+// C Code:
+/*
+#pragma once
+#include <stdint.h>
+#define DISPLAY_CONFIG_MAGIC 0x12345678
+#define CONFIG_MAX_STRIPS 10
+
+enum RGBNetworkPacketType : uint8_t {
+  PKT_TYPE_HEARTBEAT              = 0,
+  PKT_TYPE_CONFIG_ALL             = 1,
+  PKT_TYPE_CONFIG_SINGLE          = 2,
+  PKT_TYPE_LED_FRAME              = 3,
+  PKT_TYPE_RUNTIME_STATS          = 4,
+  PKT_TYPE_REQUEST_HEARTBEAT      = 5,
+  PKT_TYPE_READ_CONFIG            = 6,
+  PKT_TYPE_READ_STRIP_CONFIG_ALL  = 7,
+  PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8,
+  PKT_TYPE_READ_NETWORK_CONFIG    = 9,
+  PKT_TYPE_WRITE_NETWORK_CONFIG   = 10,
+  PKT_NUM_TYPES,
+};
+
+enum RGBConfigType : uint8_t {
+  CFG_ID_DIMENSIONS_WIDTH  = 0,
+  CFG_ID_DIMENSIONS_HEIGHT = 1,
+  CFG_ID_MAX_BRIGHTNESS    = 2,
+  CFG_ID_FRAME_RATE        = 3,
+  CFG_ID_STRIPS_ENABLE     = 4, // bitmask of strips to enable
+  CFG_ID_ENABLE_DEBUG      = 5, // set debug variable (Bit 0: show buffer positions in Display)
+  CFG_ID_HEARTBEAT_INTERVAL_FRAMES = 6, // send heartbeat every n frames
+  CFG_NUM_CONFIGS,
+};
+
+enum RGBDataType : uint8_t {
+  RGB_DATA_TYPE_RGB = 0,
+  RGB_DATA_TYPE_RGBW = 1,
+};
+
+enum LEDType : uint8_t {
+  LED_TYPE_WS2812B = 0,
+  LED_TYPE_SK6812 = 1,
+};
+
+enum WifiMode : uint8_t {
+  NETWORK_WIFI_MODE_AP = 0,
+  NETWORK_WIFI_MODE_STA = 1,
+  NUM_NETWORK_WIFI_MODES,
+};
+
+#pragma pack(push, 2)
+struct packet_hdr_t {
+  uint16_t packetType;
+  uint16_t len;
+};
+
+struct heartbeat_message_t {
+  uint32_t frameId;
+  uint32_t bufferFillLevel;
+};
+typedef struct {
+  uint32_t version;
+  uint32_t magic;
+  uint32_t rmtClockResolution_hz;
+  uint32_t dimensionsWidth;
+  uint32_t dimensionsHeight;
+  uint32_t heartbeatIntervalFrames;
+  uint32_t stripsEnable;
+  uint32_t debugFlags;
+  uint16_t frameRate;
+  uint8_t maxBrightness;
+} display_config_t;
+
+typedef struct {
+  int16_t gpio;
+  uint16_t ledCount;
+  uint8_t ledType;    // 0: RGB (WS2812B), 1: RGBW (SK6812)
+  uint8_t dataTypeId; // 0: RGB (3 bytes), 1: RGBW (4 bytes)
+} display_led_strip_config_t;
+
+typedef struct {
+  uint32_t version;
+  uint32_t magic;
+  display_led_strip_config_t configs[CONFIG_MAX_STRIPS];
+} display_led_strip_config_all_t;
+
+typedef struct {
+  uint32_t version;
+  uint32_t magic;
+  uint16_t port;
+  uint8_t wifiMode;
+  // reserved
+  uint8_t reserved[5];
+  char hostname[64];
+  char apWifiSsid[32];
+  char apWifiPassword[64];
+  char staWifiSsid[32];
+  char staWifiPassword[64];
+} display_network_config_t;
+
+struct runtime_stats_t
+{
+  // ring buffer positions
+  uint64_t readIndex;
+  uint64_t writeIndex;
+  // runtime stats
+  int64_t numCallbacks;
+  int64_t numFrames;
+  int64_t numBufferUnderrun;
+  int64_t numHeartbeats;
+  float fps_actual;
+  float fps_callbacks;
+};
+
+struct config_message_t {
+  uint32_t cfgId;
+  uint32_t value;
+};
+
+struct led_frame_message_t {
+  uint32_t frameSize;  // number of LEDs
+  uint32_t frameOffset;// offset in LEDs
+  uint8_t data[0];     // RGBW data
+};
+
+enum request_heartbeat_flags : uint8_t {
+  REQUEST_HEARTBEAT_ENABLE = 1,
+  REQUEST_RUNTIME_STATS_ENABLE = 2,
+};
+
+struct request_heartbeat_message_t {
+  uint8_t flags;  // bitmask of flags
+};
+
+struct packet_heartbeat_t {
+  struct packet_hdr_t header;
+  struct heartbeat_message_t message;
+};
+
+struct packet_config_single_t {
+  struct packet_hdr_t header;
+  struct config_message_t message;
+};
+
+struct packet_config_all_t {
+  struct packet_hdr_t header;
+  display_config_t message;
+};
+
+struct packet_led_frame_t {
+  struct packet_hdr_t header;
+  struct led_frame_message_t message;
+};
+
+struct packet_request_heartbeat_t {
+  struct packet_hdr_t header;
+  struct request_heartbeat_message_t message;
+};
+
+struct packet_runtime_stats_t {
+  struct packet_hdr_t header;
+  struct runtime_stats_t message;
+};
+struct packet_strip_config_all_t {
+  struct packet_hdr_t header;
+  display_led_strip_config_all_t message;
+};
+
+#pragma pack(pop)
+
+*/
+// define packet types and enum constants
+const PKT_TYPE_HEARTBEAT = 0;
+const PKT_TYPE_CONFIG_ALL = 1;
+const PKT_TYPE_CONFIG_SINGLE = 2;
+const PKT_TYPE_LED_FRAME = 3;
+const PKT_TYPE_RUNTIME_STATS = 4;
+const PKT_TYPE_REQUEST_HEARTBEAT = 5;
+const PKT_TYPE_READ_CONFIG = 6;
+const PKT_TYPE_READ_STRIP_CONFIG_ALL = 7;
+const PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8;
+const PKT_TYPE_READ_NETWORK_CONFIG = 9;
+const PKT_TYPE_WRITE_NETWORK_CONFIG = 10;
+const PKT_NUM_TYPES = 11;
+
+const CFG_ID_DIMENSIONS_WIDTH = 0;
+const CFG_ID_DIMENSIONS_HEIGHT = 1;
+const CFG_ID_MAX_BRIGHTNESS = 2;
+const CFG_ID_FRAME_RATE = 3;
+const CFG_ID_STRIPS_ENABLE = 4;
+const CFG_ID_ENABLE_DEBUG = 5;
+const CFG_ID_HEARTBEAT_INTERVAL_FRAMES = 6;
+const CFG_NUM_CONFIGS = 7;
+
+const RGB_DATA_TYPE_RGB = 0;
+const RGB_DATA_TYPE_RGBW = 1;
+
+const LED_TYPE_WS2812B = 0;
+const LED_TYPE_SK6812 = 1;
+
+const NETWORK_WIFI_MODE_AP = 0;
+const NETWORK_WIFI_MODE_STA = 1;
+    </script>
+    <script type="text/javascript">
+      function pageNavigate(page) {
+        let activePage = document.querySelector(".tabcontent-visible");
+        let activeButton = document.querySelector(".selected_page");
+        let newPage = document.getElementById("page_" + page);
+        let newButton = document.getElementById("button_page_" + page);
+        activeButton?.classList.remove("selected_page");
+        activePage?.classList.remove("tabcontent-visible");
+        // show new page
+        newPage?.classList.add("tabcontent-visible");
+        newButton?.classList.add("selected_page");
+      }
+      function sliderChanged(sliderIndex) {
+        let slider = document.getElementById("sliderBri");
+        let value = slider.value;
+        let sliderBubble = document.querySelector(".sliderbubble");
+        sliderBubble.innerHTML = value;
+
+      }
+      function sliderInput(sliderIndex) {
+        let slider = document.getElementById("sliderBri");
+        let value = slider.value;
+        let sliderBubble = document.querySelector(".sliderbubble");
+        sliderBubble.innerHTML = value;
+      }
+    </script>
+</head>
+
+<body>
+    
+    <div class="container_menu">
+      <div class="tab">
+        <button id="button_page_status" onclick="pageNavigate('status')">Status</button>
+        <button id="button_page_config" onclick="pageNavigate('config')">Config</button>
+        <button id="button_page_about"  onclick="pageNavigate('about')">About</button>
+      </div>
+    </div>
+
+    <!-- <div id="asdf" style="width: 400px; height: 4444px; background-color: red;">&nbsp;</div> -->
+    <div class ="container_page">
+      <div class="page_content" id="page_status">
+        <div id="picker" class="noslide"></div>
+        <br>
+        <br>
+        <div class="container_brightness">
+          <label for="sliderBri">Brightness</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
+        </div>
+        <div class="slider">
+          <div class="sliderwrap">
+            <input id="sliderBri" onchange="sliderChanged(0)" oninput="sliderInput(0)" max="255" min="0" type="range" value="128">
+            <div class="sliderdisplay"></div>
+          </div>
+        </div>
+      </div>
+      <div class="page_content" id="page_config">
+        <fieldset class="container_device_network_config">
+          <legend>
+            Network Configuration
+          </legend>
+          <div class="setting">
+            <span class="label">
+              Hostname
+            </span><input maxlength="79" size="18" name="config_device_hostname" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              Port
+            </span><input maxlength="79" size="8" name="config_device_port" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              WiFi Mode
+            </span>
+            <select name="config_device_wifi_mode">
+              <option value="1">Connect to WiFi</option>
+              <option value="0">Access Point</option>
+            </select>
+          </div>
+          <div class="setting">
+            <span class="label">
+              SSID
+            </span><input maxlength="79" size="18" name="config_device_sta_ssid" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              Password
+            </span><input maxlength="79" size="18" name="config_device_sta_password" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              AP SSID
+            </span><input maxlength="79" size="18" name="config_device_ap_ssid" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              AP Password
+            </span><input maxlength="79" size="18" name="config_device_ap_password" value="">
+          </div>
+          <div>
+            <button onclick="saveNetworkConfig()" class="btn">Save</button>
+          </div>
+        </fieldset>
+        <fieldset class="container_device_led_config">
+          <legend>
+            LED Configuration
+          </legend>
+          <div class="setting">
+            <span class="label">
+              Dimensions (WxH)
+            </span>
+            <div class="twoinput">
+              <input maxlength="79" size="6" name="config_display_width" value="">
+              <input maxlength="79" size="6" name="config_display_height" value="">
+            </div>
+          </div>
+          <div class="setting">
+            <span class="label">
+              Frame Rate
+            </span><input maxlength="79" size="8" name="config_display_frame_rate" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              Max Brightness
+            </span><input maxlength="79" size="8" name="config_display_max_brightness" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              RGBW
+            </span><input type="checkbox" name="config_display_is_rgbw" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              Debug Flags
+            </span><input maxlength="79" size="12" name="config_display_debug_flags" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              Heartbeat Interval
+            </span><input maxlength="79" size="12" name="config_display_heartbeat_interval" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              Strips Enabled
+            </span><input maxlength="79" size="12" name="config_display_strips_enabled" value="">
+          </div>
+          <div class="setting">
+            <span class="label">
+              RMT Clock
+            </span><input maxlength="79" size="12" name="config_display_rmt_clock_resolution" value="">
+          </div>
+          <div>
+            <button onclick="saveConfig()" class="btn">Save</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>
+            LED Strip Configuration
+          </legend>
+          <div class="container_led_strip_config">
+            <fieldset id="stripconfig_base" class="stripconfig">
+              <legend>
+                Strip 1
+              </legend>
+              <div class="setting">
+                <span class="label">
+                  GPIO
+                </span><input name="config_led_strip_gpio" value="">
+              </div>
+              <div class="setting">
+                <span class="label">
+                  Type
+                </span>
+                <select name="config_led_strip_led_type">
+                  <option value="0">WS2812B</option>
+                  <option value="1">SK6812</option>
+                </select>
+              </div>
+              <div class="setting">
+                <span class="label">
+                  Datatype
+                </span>
+                <select name="config_led_strip_data_type">
+                  <option value="0">RGB</option>
+                  <option value="1">RGBW</option>
+                </select>
+              </div>
+              <div class="setting">
+                <span class="label">
+                  Length
+                </span><input name="config_led_strip_led_count" value="">
+              </div>
+            </fieldset>
+          </div>
+          <button onclick="saveStripConfig()" class="btn">Save</button>
+        </fieldset>
+        <br>
+      </div>
+    </div>
+    <script>
+      let CONFIG_MAX_STRIPS = 10;
+      // duplicate stripconfig_0
+      for (let i = 0; i < CONFIG_MAX_STRIPS; i++) {
+        let stripconfig = document.getElementById("stripconfig_base").cloneNode(true);
+        stripconfig.id = "stripconfig_" + i;
+        stripconfig.querySelector("legend").innerText = "Strip " + (i + 1) + "";
+        // document.querySelector(".container_led_strip_config").appendChild(stripconfig);
+        // insert child before save button
+        document.querySelector(".container_led_strip_config").insertBefore(stripconfig, document.querySelector(".container_led_strip_config").lastElementChild);
+      }
+      // add event listener to color WiFi Mode
+      document.querySelector("select[name=config_device_wifi_mode]").addEventListener("change", function() {
+        let wifiMode = document.querySelector("select[name=config_device_wifi_mode]").value;
+        let ssid = document.querySelector("input[name=config_device_sta_ssid]");
+        let password = document.querySelector("input[name=config_device_sta_password]");
+        let ap_ssid = document.querySelector("input[name=config_device_ap_ssid]");
+        let ap_password = document.querySelector("input[name=config_device_ap_password]");
+        if (wifiMode == "1") {
+          ssid.disabled = false;
+          password.disabled = false;
+          ap_ssid.disabled = true;
+          ap_password.disabled = true;
+        } else {
+          ssid.disabled = true;
+          password.disabled = true;
+          ap_ssid.disabled = false;
+          ap_password.disabled = false;
+        }
+      });
+      // trigger event listener above
+      document.querySelector("select[name=config_device_wifi_mode]").dispatchEvent(new Event("change"));
+      
+      let colorpicker_width = 420;
+      // figure out container pyhsical width of parent of #picker
+      var container = document.getElementById("picker").parentElement;
+      if (container && container.offsetWidth * 0.60 > colorpicker_width) {
+        colorpicker_width = container.offsetWidth * 0.60;
+      }
+      // actually get inner height of window
+      let window_height = window.innerHeight;
+      if (colorpicker_width > window_height*0.6) {
+        colorpicker_width = window_height*0.6;
+      }
+      // first check if iro has been loaded
+      let bIroReady = false;
+      if (typeof iro !== "undefined") {
+        let cpick = new iro.ColorPicker("#picker", {
+          width: colorpicker_width,
+          wheelLightness: false,
+          wheelAngle: 270,
+          wheelDirection: "clockwise",
+          layout: [{
+            component: iro.ui.Wheel,
+            options: {}
+          }]
+        });
+      }
+      const MAPPING_STRUCT_CONFIG_CSS_SELECTOR = {
+        "version": null,
+        "magic": null,
+        "hostname": "input[name=config_device_hostname]",
+        "dimensionsWidth": "input[name=config_display_width]",
+        "dimensionsHeight": "input[name=config_display_height]",
+        "frameRate": "input[name=config_display_frame_rate]",
+        "maxBrightness": "input[name=config_display_max_brightness]",
+        "isRGBW": "input[name=config_display_is_rgbw]",
+        "debugFlags": "input[name=config_display_debug_flags]",
+        "heartbeatIntervalFrames": "input[name=config_display_heartbeat_interval]",
+        "stripsEnable": "input[name=config_display_strips_enabled]",
+        "rmtClockResolution_hz": "input[name=config_display_rmt_clock_resolution]"
+      };
+      const MAPPING_STRUCT_NETWORK_CONFIG_CSS_SELECTOR = {
+        "version": null,
+        "magic": null,
+        "hostname": "input[name=config_device_hostname]",
+        "port": "input[name=config_device_port]",
+        "wifiMode": "select[name=config_device_wifi_mode]",
+        "apWifiSsid": "input[name=config_device_ap_ssid]",
+        "apWifiPassword": "input[name=config_device_ap_password]",
+        "staWifiSsid": "input[name=config_device_sta_ssid]",
+        "staWifiPassword": "input[name=config_device_sta_password]"
+      };
+
+      let wsAddr = "ws://" + document.location.host + document.location.pathname;
+      wsAddr += (document.location.pathname == '/') ? "ws" : "/ws";
+      ws = new WebSocket(wsAddr);
+      function loadConfig() {
+        let request_config = new Uint8Array(4);
+        request_config[0] = PKT_TYPE_READ_CONFIG;
+        ws.send(request_config);
+      }
+      function loadStripConfig() {
+        let request_config = new Uint8Array(4);
+        request_config[0] = PKT_TYPE_READ_STRIP_CONFIG_ALL;
+        ws.send(request_config);
+      }
+      function loadNetworkConfig() {
+        let request_config = new Uint8Array(4);
+        request_config[0] = PKT_TYPE_READ_NETWORK_CONFIG;
+        ws.send(request_config);
+      }
+      function saveConfig() {
+        let displayConfig = {};
+        for (let key in MAPPING_STRUCT_CONFIG_CSS_SELECTOR) {
+          let cssSelector = MAPPING_STRUCT_CONFIG_CSS_SELECTOR[key];
+          if (cssSelector) {
+            displayConfig[key] = document.querySelector(cssSelector).value;
+          }
+        }
+        displayConfig["version"] = 2;
+        displayConfig["magic"] = 0x12345678;
+        console.log("Saving display config", displayConfig);
+        let displayConfigArray = new Uint32Array(9);
+        displayConfigArray[0] = displayConfig["version"];
+        displayConfigArray[1] = displayConfig["magic"];
+        displayConfigArray[2] = displayConfig["rmtClockResolution_hz"];
+        displayConfigArray[3] = displayConfig["dimensionsWidth"];
+        displayConfigArray[4] = displayConfig["dimensionsHeight"];
+        displayConfigArray[5] = displayConfig["heartbeatIntervalFrames"];
+        displayConfigArray[6] = displayConfig["stripsEnable"];
+        displayConfigArray[7] = displayConfig["debugFlags"];
+        displayConfigArray[8] = displayConfig["frameRate"] & 0xFFFF;
+        displayConfigArray[8] |= (displayConfig["maxBrightness"] & 0xFF) << 16;
+        displayConfigArray[8] |= (displayConfig["isRGBW"] & 0xFF) << 24;
+        let packetHdrArray = new Uint16Array(2);
+        packetHdrArray[0] = PKT_TYPE_CONFIG_ALL;
+        packetHdrArray[1] = 36;
+
+        // merge the two
+        let packetArray = new Uint8Array(packetHdrArray.length * 2 + displayConfigArray.length * 4);
+        packetArray.set(new Uint8Array(packetHdrArray.buffer), 0);
+        packetArray.set(new Uint8Array(displayConfigArray.buffer), packetHdrArray.length * 2);
+        // print first 8 bytes
+        for (let i = 0; i < packetArray.length; i++) {
+          console.log("packetArray[" + i + "] = " + packetArray[i]);
+        }
+        ws.send(packetArray);
+      }
+      function saveNetworkConfig() {
+        let networkConfig = {};
+        for (let key in MAPPING_STRUCT_NETWORK_CONFIG_CSS_SELECTOR) {
+          let cssSelector = MAPPING_STRUCT_NETWORK_CONFIG_CSS_SELECTOR[key];
+          if (cssSelector) {
+            networkConfig[key] = document.querySelector(cssSelector).value;
+          }
+        }
+        networkConfig["version"] = 2;
+        networkConfig["magic"] = 0x12345678;
+        console.log("Saving network config", networkConfig);
+        let dv = new DataView(new ArrayBuffer(CONFIG_MAX_STRIPS * 6 + 16));
+        dv.setUint32(0, networkConfig["version"], true);
+        dv.setUint32(4, networkConfig["magic"], true);
+        dv.setUint16(8, networkConfig["port"], true);
+        dv.setUint8(10, networkConfig["wifiMode"]);
+        let buf = new Uint8Array(16+64+32+64+32+64);
+        // copy from dv to buf
+        for (let i = 0; i < dv.byteLength; i++) {
+          buf[i] = dv.getUint8(i);
+        }
+        function EncodeStringToBuf(string, buf, max_len, offset)
+        {
+          let enc = new TextEncoder();
+          let str_buf = enc.encode(string);
+          for (let i = 0; i < str_buf.length; i++) {
+            buf[offset + i] = str_buf[i];
+          }
+          // write zeros for left over space
+          for (let i = str_buf.length; i < max_len; i++) {
+            buf[offset + i] = 0;
+          }
+        }
+        // copy strings
+        EncodeStringToBuf(networkConfig["hostname"], buf, 64, 16);
+        EncodeStringToBuf(networkConfig["apWifiSsid"], buf, 32, 16 + 64);
+        EncodeStringToBuf(networkConfig["apWifiPassword"], buf, 64, 16 + 64 + 32);
+        EncodeStringToBuf(networkConfig["staWifiSsid"], buf, 32, 16 + 64 + 32 + 64);
+        EncodeStringToBuf(networkConfig["staWifiPassword"], buf, 64, 16 + 64 + 32 + 64 + 32);
+        let packetHdrArray = new Uint16Array(2);
+        packetHdrArray[0] = PKT_TYPE_WRITE_NETWORK_CONFIG;
+        packetHdrArray[1] = buf.length;
+        // merge the two
+        let packetArray = new Uint8Array(packetHdrArray.length * 2 + buf.length);
+        packetArray.set(new Uint8Array(packetHdrArray.buffer), 0);
+        packetArray.set(new Uint8Array(buf.buffer), packetHdrArray.length * 2);
+        ws.send(packetArray);
+      };
+      function saveStripConfig() {
+        let stripConfigs = [];
+        for (let i = 0; i < CONFIG_MAX_STRIPS; i++) {
+          let config_name = "stripconfig_" + i;
+          let stripconfig = document.getElementById(config_name);
+          if (stripconfig) {
+            let cfg = {
+              "gpio": stripconfig.querySelector("input[name=config_led_strip_gpio]").value,
+              "ledType": stripconfig.querySelector("select[name=config_led_strip_led_type]").value,
+              "dataTypeId": stripconfig.querySelector("select[name=config_led_strip_data_type]").value,
+              "ledCount": stripconfig.querySelector("input[name=config_led_strip_led_count]").value
+            };
+            stripConfigs.push(cfg);
+          }
+        }
+        console.log("Saving strip config", stripConfigs);
+        let stripConfigArray = new Uint8Array(8 + CONFIG_MAX_STRIPS * 6);
+        let dv = new DataView(stripConfigArray.buffer);
+        dv.setUint32(0, 2, true);
+        dv.setUint32(4, 0x12345678, true);
+        for (let i = 0; i < CONFIG_MAX_STRIPS; i++) {
+          let cfg = stripConfigs[i];
+          dv.setInt16(8 + i * 6, cfg.gpio, true);
+          dv.setUint16(8 + i * 6 + 2, cfg.ledCount, true);
+          dv.setUint8(8 + i * 6 + 4, cfg.ledType);
+          dv.setUint8(8 + i * 6 + 5, cfg.dataTypeId);
+        }
+        let packetHdrArray = new Uint16Array(2);
+        packetHdrArray[0] = PKT_TYPE_WRITE_STRIP_CONFIG_ALL;
+        packetHdrArray[1] = 4 + CONFIG_MAX_STRIPS * 6;
+        // merge the two
+        let packetArray = new Uint8Array(packetHdrArray.length * 2 + stripConfigArray.length);
+        packetArray.set(new Uint8Array(packetHdrArray.buffer), 0);
+        packetArray.set(new Uint8Array(stripConfigArray.buffer), packetHdrArray.length * 2);
+        ws.send(packetArray);
+      }
+      function saveAllConfig() {
+        saveConfig();
+        saveNetworkConfig();
+        saveStripConfig();
+      }
+      ws.onopen = function() {
+        console.log("Connected to server");
+        loadNetworkConfig();
+        loadConfig();
+        loadStripConfig();
+      };
+      ws.onmessage = async function(event) {
+        const arrayBuffer = await new Response(event.data).arrayBuffer();
+        if (arrayBuffer.byteLength < 4) {
+          console.log("Received invalid message");
+          return;
+        }
+        let pktU8 = new Uint8Array(arrayBuffer);
+        let pktU16 = new Uint16Array(arrayBuffer);
+        let pktU32 = new Uint32Array(arrayBuffer);
+        // get packet type and packet_hdr_t
+        let packetType = pktU16[0];
+        let packetLen = pktU16[1];
+        console.log("Packet type: " + packetType + " Packet length: " + packetLen);
+        if (packetType == PKT_TYPE_READ_NETWORK_CONFIG) {
+          // read display_network_config_t
+          let pkt = new DataView(arrayBuffer, 4);
+          let version = pkt.getUint32(0, true);
+          let magic = pkt.getUint32(4, true).toString(16);
+          let networkConfig = {
+            "version": pkt.getUint32(0, true),
+            "magic": pkt.getUint32(4, true),
+            "port": pkt.getUint16(8, true),
+            "wifiMode": pkt.getUint8(10),
+            "reserved": [pkt.getUint8(11), pkt.getUint8(12), pkt.getUint8(13), pkt.getUint8(14), pkt.getUint8(15)],
+            "hostname": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16, 64)),
+            "apWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64, 32)),
+            "apWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32, 64)),
+            "staWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64, 32)),
+            "staWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64 + 32, 64))
+          };
+          // fix zero termination from c-strings
+          for (let key in networkConfig) {
+            if (typeof networkConfig[key] == "string") {
+              networkConfig[key] = networkConfig[key].split("\0")[0];
+            }
+          }
+          console.log("Received network config", version, magic, networkConfig);
+          // update document
+          try {
+            for (let key in networkConfig) {
+              let cssSelector = MAPPING_STRUCT_NETWORK_CONFIG_CSS_SELECTOR[key];
+              if (cssSelector) {
+                document.querySelector(cssSelector).value = networkConfig[key];
+              }
+            }
+          } catch (e) {
+            console.log("Error updating document", e);
+          }
+        }
+        if (packetType == PKT_TYPE_CONFIG_ALL) {
+          // reasd display_config_t
+          let pkt = new DataView(arrayBuffer, 4);
+          let version = pkt.getUint32(0, true);
+          let magic = pkt.getUint32(4, true).toString(16);
+          const displayConfigJson = {
+            "version": pkt.getUint32(0, true),
+            "magic": pkt.getUint32(4, true),
+            "rmtClockResolution_hz": pkt.getUint32(8, true),
+            "dimensionsWidth": pkt.getUint32(12, true),
+            "dimensionsHeight": pkt.getUint32(16, true),
+            "heartbeatIntervalFrames": pkt.getUint32(20, true),
+            "stripsEnable": pkt.getUint32(24, true),
+            "debugFlags": pkt.getUint32(28, true),
+            "frameRate": pkt.getUint16(32, true),
+            "maxBrightness": pkt.getUint8(34),
+            "isRGBW": pkt.getUint8(35)
+          };
+          console.log("Received display config", version, magic, displayConfigJson);
+          // update document 
+          try{
+            for (let key in displayConfigJson) {
+              let cssSelector = MAPPING_STRUCT_CONFIG_CSS_SELECTOR[key];
+              if (cssSelector) {
+                document.querySelector(cssSelector).value = displayConfigJson[key];
+              }
+            }
+          } catch (e) {
+            console.log("Error updating document", e);
+          }
+
+        }
+        if (packetType == PKT_TYPE_READ_STRIP_CONFIG_ALL) {
+          // read display_led_strip_config_all_t
+          let pkt = new DataView(arrayBuffer, 4);
+          let version = pkt.getUint32(0, true);
+          let magic = pkt.getUint32(4, true).toString(16);
+          console.log("Received strip config", version, magic);
+          let stripConfigs = [];
+          for (let i = 0; i < CONFIG_MAX_STRIPS; i++) {
+            let stripConfig = {
+              // int16_t
+              "gpio":     pkt.getInt16(8 + i * 6, true),
+              // uint16_t
+              "ledCount": pkt.getUint16(10 + i * 6, true),
+              // uint8_t
+              "ledType":  pkt.getUint8(12 + i * 6),
+              // uint8_t
+              "dataTypeId": pkt.getUint8(13 + i * 6)
+            };
+            stripConfigs.push(stripConfig);
+          }
+          console.log("Received strip config all", stripConfigs);
+          for (let i = 0; i < stripConfigs.length; i++) {
+            let config_name = "stripconfig_" + i;
+            let stripconfig = document.getElementById(config_name);
+            if (stripconfig) {
+              let cfg = stripConfigs[i];
+              stripconfig.querySelector("input[name=config_led_strip_gpio]").value = cfg.gpio;
+              stripconfig.querySelector("select[name=config_led_strip_led_type]").value = cfg.ledType;
+              stripconfig.querySelector("select[name=config_led_strip_data_type]").value = cfg.dataTypeId;
+              stripconfig.querySelector("input[name=config_led_strip_led_count]").value = cfg.ledCount;
+            }
+          }
+        }
+      };
+      pageNavigate("config");
+    </script>
+</body>
+
+</html>

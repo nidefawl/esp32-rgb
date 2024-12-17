@@ -1,7 +1,10 @@
 ## IDF Component Manager Manifest File
 dependencies:
   led_strip_async: 
-     path: ../led_strip_async
+    path: ../led_strip_async
+  nvs_wifi_connect:
+    path: ../nvs_wifi_connect
+  espressif/mdns: "^1.4.0"
   ## Required IDF version
   idf:
     version: ">=5.3.1"
