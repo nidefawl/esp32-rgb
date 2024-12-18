@@ -729,6 +729,30 @@ static void led_display_task() {
       write_nvs_struct("display_config", &displayConfig, sizeof(display_config_t));
       ESP_LOGI(TAG, "wrote display config to flash");
     }
+    int socket = g_socket_udp;
+    if (socket != -1) {
+      if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
+        if (!g_udp_master_address.s2_len) {
+          // send a broadcast packet to find the master
+          struct packet_request_heartbeat_t req = {
+            .header = {
+              .packetType = PKT_TYPE_REQUEST_HEARTBEAT,
+              .len        = sizeof(struct request_heartbeat_message_t),
+            },
+            .message = {
+              .flags = REQUEST_HEARTBEAT_ENABLE,
+            },
+          };
+          struct sockaddr_storage udp_broadcast_address = {};
+          struct sockaddr_in* udp_broadcast_address_in = (struct sockaddr_in*)&udp_broadcast_address;
+          udp_broadcast_address_in->sin_family = AF_INET;
+          udp_broadcast_address_in->sin_addr.s_addr = INADDR_BROADCAST;
+          udp_broadcast_address_in->sin_port = htons(LED_UDP_LISTEN_PORT);
+          send_udp_packet(socket, &udp_broadcast_address, &req, sizeof(req));
+        }
+        xSemaphoreGive(semaphoreNetworkMasterAddress);
+      }
+    }
   }
 }
 
@@ -1023,6 +1047,11 @@ static void udp_server_task(void* pvParameters) {
     int err = bind(s_socket, (struct sockaddr*) &dest_addr, sizeof(dest_addr));
     if (err < 0) {
       ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+    }
+    int broadcastValue = 1;
+    err = setsockopt(s_socket, SOL_SOCKET, SO_BROADCAST, &broadcastValue, sizeof(broadcastValue));
+    if (err < 0) {
+      ESP_LOGE(TAG, "Socket unable to set broadcast: errno %d", errno);
     }
     g_socket_udp = s_socket;
 
