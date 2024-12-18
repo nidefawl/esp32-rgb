@@ -15,6 +15,7 @@ enum RGBNetworkPacketType : uint8_t {
   PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8,
   PKT_TYPE_READ_NETWORK_CONFIG    = 9,
   PKT_TYPE_WRITE_NETWORK_CONFIG   = 10,
+  PKT_TYPE_ANNOUNCE_BROADCAST     = 11,
   PKT_NUM_TYPES,
 };
 
@@ -164,6 +165,11 @@ struct packet_strip_config_all_t {
 struct packet_network_config_t {
   struct packet_hdr_t header;
   display_network_config_t message;
+};
+
+struct packet_broadcast_t {
+  struct packet_hdr_t header;
+  int message;
 };
 
 #pragma pack(pop)

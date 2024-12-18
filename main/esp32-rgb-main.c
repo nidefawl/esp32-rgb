@@ -746,21 +746,19 @@ static void led_display_task() {
       if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
         if (!g_udp_master_address.s2_len) {
           // send a broadcast packet to find the master
-          struct packet_request_heartbeat_t req = {
+          struct packet_broadcast_t pkt = {
             .header = {
-              .packetType = PKT_TYPE_REQUEST_HEARTBEAT,
-              .len        = sizeof(struct request_heartbeat_message_t),
+              .packetType = PKT_TYPE_ANNOUNCE_BROADCAST,
+              .len        = sizeof(int),
             },
-            .message = {
-              .flags = REQUEST_HEARTBEAT_ENABLE,
-            },
+            .message = 0,
           };
           struct sockaddr_storage udp_broadcast_address = {};
           struct sockaddr_in* udp_broadcast_address_in = (struct sockaddr_in*)&udp_broadcast_address;
           udp_broadcast_address_in->sin_family = AF_INET;
           udp_broadcast_address_in->sin_addr.s_addr = INADDR_BROADCAST;
           udp_broadcast_address_in->sin_port = htons(LED_UDP_LISTEN_PORT);
-          send_udp_packet(socket, &udp_broadcast_address, &req, sizeof(req));
+          send_udp_packet(socket, &udp_broadcast_address, &pkt, sizeof(pkt));
         }
         xSemaphoreGive(semaphoreNetworkMasterAddress);
       }
@@ -929,7 +927,7 @@ void display_handle_packet(uint8_t* rx_buffer, int len, int sock,
                 pkt->message.frameOffset, pkt->message.frameSize);
         return;
       }
-      // also check received data length
+      // check received data length
       int expectedSize = sizeof(struct packet_hdr_t) +
                         sizeof(struct led_frame_message_t) +
                         pkt->message.frameSize * 4;
