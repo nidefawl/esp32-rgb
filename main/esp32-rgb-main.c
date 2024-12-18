@@ -86,6 +86,7 @@ static SemaphoreHandle_t semaphoreNetworkMasterAddress = NULL;
 static SemaphoreHandle_t semaphoreSocketStart = NULL;
 static int g_socket_udp = -1;
 struct sockaddr_storage g_udp_master_address = {};
+static int64_t g_timeLastFrame_us = 0;
 
 static void display_state_reset() {
   memset((void*)ledsBuffer, 0, sizeof(ledsBuffer));
@@ -659,9 +660,20 @@ static void display_strips_update(void* arg)
 
   if (bCanRead) {
     displayState.numFrames++;
+    g_timeLastFrame_us = esp_timer_get_time();
   } else {
-    if (displayState.numFrames > 0)
+    if (displayState.numFrames > 0) {
       displayState.numBufferUnderrun++;
+      // if we haven't received a frame in 5 seconds, reset the master address
+      if (esp_timer_get_time() - g_timeLastFrame_us > 5e6) {
+        if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
+          g_timeLastFrame_us = esp_timer_get_time();
+          memset(&g_udp_master_address, 0, sizeof(g_udp_master_address));
+          xSemaphoreGive(semaphoreNetworkMasterAddress);
+          ESP_LOGI(TAG, "Resetting master address");
+        }
+      }
+    }
   }
   displayState.numCallbacks++;
 }
