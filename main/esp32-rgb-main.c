@@ -251,9 +251,6 @@ static void log_display_strip_config(display_led_strip_config_all_t* config) {
 static void display_strips_init();
 static void display_config_set(display_config_t* config, bool bForceReset) {
   bool bChanged = memcmp(&displayConfig, config, sizeof(display_config_t)) != 0;
-  // bool bDimensChanged = displayConfig.dimensionsWidth != config->dimensionsWidth
-  //                       || displayConfig.dimensionsHeight != config->dimensionsHeight;
-  // bool bRateChanged = displayConfig.frameRate != config->frameRate;
   log_display_config(config);
   if (bChanged || bForceReset) {
     if (periodic_timer) {
@@ -338,6 +335,16 @@ static esp_err_t read_nvs_struct(const char* key, void* data, size_t len) {
     return err;
 }
 
+void write_strip_config(display_led_strip_config_all_t* config) {
+  if (display_strip_config_validate(config)) {
+    display_strip_config_set(config, true);
+    write_nvs_struct("strip_config", config, sizeof(display_led_strip_config_all_t));
+    ESP_LOGI(TAG, "Set LED strip config all");
+  } else {
+    ESP_LOGE(TAG, "Invalid LED strip config all");
+  }
+}
+
 static void _log_nvs_error(esp_err_t err){
   switch (err) {
     case ESP_OK:
@@ -412,19 +419,6 @@ static void display_load_config_from_flash() {
     ESP_LOGI(TAG, "Loaded config from flash");
     log_display_config(&config);
   }
-  display_led_strip_config_all_t ledStripConfigAll;
-  if ((err = read_nvs_struct("strip_config", &ledStripConfigAll, sizeof(display_led_strip_config_all_t))) != ESP_OK 
-      || !display_strip_config_validate(&ledStripConfigAll)) {
-    display_strip_config_reset(&ledStripConfigAll);
-    ESP_LOGW(TAG, "Invalid LED strip config in flash, resetting");
-    esp_err_t err = write_nvs_struct("strip_config", &ledStripConfigAll, sizeof(display_led_strip_config_all_t));
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "Error writing LED strip config to flash");
-      _log_nvs_error(err);
-    }
-  } else {
-    ESP_LOGI(TAG, "Loaded LED strip config from flash");
-  }
   display_network_config_t networkConfig;
   if ((err = read_nvs_struct("network_config", &networkConfig, sizeof(display_network_config_t))) != ESP_OK
       || !display_network_config_validate(&networkConfig)) {
@@ -439,10 +433,17 @@ static void display_load_config_from_flash() {
     ESP_LOGI(TAG, "Loaded network config from flash");
   }
   displayConfig = config;
-  for (int i = 0; i < CONFIG_MAX_STRIPS; i++) {
-    displayLedStripConfig[i] = ledStripConfigAll.configs[i];
-  }
   displayNetworkConfig = networkConfig;
+  display_led_strip_config_all_t ledStripConfigAll;
+  if ((err = read_nvs_struct("strip_config", &ledStripConfigAll, sizeof(display_led_strip_config_all_t))) != ESP_OK 
+      || !display_strip_config_validate(&ledStripConfigAll)) {
+    display_strip_config_reset(&ledStripConfigAll);
+    ESP_LOGW(TAG, "Invalid LED strip config in flash, resetting");
+    write_strip_config(&ledStripConfigAll);
+  } else {
+    display_strip_config_set(&ledStripConfigAll, false);
+    ESP_LOGI(TAG, "Loaded LED strip config from flash");
+  }
 }
 
 static uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
@@ -774,16 +775,6 @@ void handle_config_all_packet(display_config_t* config) {
     ESP_LOGI(TAG, "Set config all");
   } else {
     ESP_LOGE(TAG, "Invalid config all");
-  }
-}
-
-void write_strip_config(display_led_strip_config_all_t* config) {
-  if (display_strip_config_validate(config)) {
-    display_strip_config_set(config, true);
-    write_nvs_struct("display_led_strip_config_all", &displayLedStripConfig, sizeof(displayLedStripConfig));
-    ESP_LOGI(TAG, "Set LED strip config all");
-  } else {
-    ESP_LOGE(TAG, "Invalid LED strip config all");
   }
 }
 
