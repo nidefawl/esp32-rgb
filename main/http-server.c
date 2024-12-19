@@ -92,7 +92,7 @@ static esp_err_t websocket_server(httpd_req_t *req)
 }
 
 
-static const httpd_uri_t example_ws = {
+static const httpd_uri_t websocket_endpoint = {
     .uri        = "/ws",
     .method     = HTTP_GET,
     .handler    = websocket_server,
@@ -100,7 +100,7 @@ static const httpd_uri_t example_ws = {
     .is_websocket = true
 };
 
-static esp_err_t get_handler(httpd_req_t *req)
+static esp_err_t get_html_handler(httpd_req_t *req)
 {
     extern const unsigned char index_html_start[] asm("_binary_index_html_start");
     extern const unsigned char index_html_end[] asm("_binary_index_html_end");
@@ -110,10 +110,10 @@ static esp_err_t get_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
 }
-static const httpd_uri_t example_gh = {
+static const httpd_uri_t endpoint_html = {
     .uri = "/",
     .method = HTTP_GET,
-    .handler = get_handler,
+    .handler = get_html_handler,
     .user_ctx = NULL
 };
 // css file handler
@@ -128,7 +128,7 @@ static esp_err_t get_css_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
 }
-static const httpd_uri_t example_css = {
+static const httpd_uri_t endpoint_css = {
     .uri = "/style.css",
     .method = HTTP_GET,
     .handler = get_css_handler,
@@ -138,13 +138,13 @@ static const httpd_uri_t example_css = {
 esp_err_t example_register_uri_handler(httpd_handle_t server)
 {
     esp_err_t ret = ESP_OK;
-    ret = httpd_register_uri_handler(server, &example_gh);
+    ret = httpd_register_uri_handler(server, &endpoint_html);
     if (ret)
         goto _ret;
-    ret = httpd_register_uri_handler(server, &example_css);
+    ret = httpd_register_uri_handler(server, &endpoint_css);
     if (ret)
         goto _ret;
-    ret = httpd_register_uri_handler(server, &example_ws);
+    ret = httpd_register_uri_handler(server, &websocket_endpoint);
     if (ret)
         goto _ret;
 _ret:
