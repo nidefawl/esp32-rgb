@@ -258,9 +258,11 @@ static void display_config_set(display_config_t* config, bool bForceReset) {
       esp_timer_stop(periodic_timer);
     }
     vTaskDelay(5);
+    xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
     displayConfig = *config;
     display_strips_init();
     display_buffer_position_reset();
+    xSemaphoreGive(semaphoreDisplay);
     if (periodic_timer) {
       ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 1000000 / config->frameRate));
     }
@@ -405,6 +407,7 @@ static void _log_nvs_error(esp_err_t err){
   }
 }
 static void display_load_config_from_flash() {
+  xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
   esp_err_t err;
   display_config_t config;
   if ((err = read_nvs_struct("display_config", &config, sizeof(display_config_t))) != ESP_OK 
@@ -437,7 +440,7 @@ static void display_load_config_from_flash() {
   displayNetworkConfig = networkConfig;
   display_led_strip_config_all_t ledStripConfigAll;
   if ((err = read_nvs_struct("strip_config", &ledStripConfigAll, sizeof(display_led_strip_config_all_t))) != ESP_OK 
-      || !display_strip_config_validate(&ledStripConfigAll)) {
+    || !display_strip_config_validate(&ledStripConfigAll)) {
     display_strip_config_reset(&ledStripConfigAll);
     ESP_LOGW(TAG, "Invalid LED strip config in flash, resetting");
     write_strip_config(&ledStripConfigAll);
@@ -445,6 +448,7 @@ static void display_load_config_from_flash() {
     display_strip_config_set(&ledStripConfigAll, false);
     ESP_LOGI(TAG, "Loaded LED strip config from flash");
   }
+  xSemaphoreGive(semaphoreDisplay);
 }
 
 static uint8_t scale_and_clamp(uint8_t color, uint8_t maxBrightness) {
@@ -552,6 +556,7 @@ static inline uint32_t display_get_buffer_fillstate() {
 
 static void display_strips_update(void* arg)
 {
+  xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
   // check if we can read the next frame
   const bool bCanRead = displayState.readIndex < displayState.writeIndex;
   // log positions and frame
@@ -676,6 +681,7 @@ static void display_strips_update(void* arg)
     }
   }
   displayState.numCallbacks++;
+  xSemaphoreGive(semaphoreDisplay);
 }
 
 static void display_strips_init() {
@@ -772,7 +778,9 @@ void handle_config_single_packet(struct packet_config_single_t* pkt) {
     return;
   }
   enum RGBConfigType cfgId = pkt->message.cfgId;
+  xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
   display_config_t config = displayConfig;
+  xSemaphoreGive(semaphoreDisplay);
   switch (cfgId) {
     case CFG_ID_DIMENSIONS_WIDTH:
       config.dimensionsWidth = clamp_u32(pkt->message.value, 1, CONFIG_MAX_STRIPS);
@@ -879,6 +887,7 @@ void handle_request_heartbeat_packet(struct request_heartbeat_message_t* req, st
 }
 
 struct packet_config_all_t read_display_config() {
+  xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
   struct packet_config_all_t config = {
     .header = {
         .packetType = PKT_TYPE_CONFIG_ALL,
@@ -886,6 +895,7 @@ struct packet_config_all_t read_display_config() {
     },
     .message = displayConfig,
   };
+  xSemaphoreGive(semaphoreDisplay);
   return config;
 }
 
