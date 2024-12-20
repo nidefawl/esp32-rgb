@@ -971,8 +971,6 @@ void send_websocket_packet(httpd_req_t *req, httpd_ws_frame_t* ws_pkt, void* mes
 }
 bool display_handle_websocket_packet(httpd_req_t *req, httpd_ws_frame_t* ws_pkt) {
   struct packet_hdr_t* hdr = (struct packet_hdr_t*) ws_pkt->payload;
-  // log packet type and length
-  ESP_LOGI(TAG, "WS Packet: Type %d - Len %d", hdr->packetType, hdr->len);
   if (hdr->packetType == PKT_TYPE_READ_NETWORK_CONFIG) {
     struct packet_network_config_t readConfig = read_network_config();
     send_websocket_packet(req, ws_pkt, &readConfig, sizeof(readConfig));
