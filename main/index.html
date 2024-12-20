@@ -246,9 +246,9 @@ const NETWORK_WIFI_MODE_STA = 1;
     
     <div class="container_menu">
       <div class="tab">
-        <button id="button_page_status" onclick="pageNavigate('status')">Status</button>
+        <!-- <button id="button_page_status" onclick="pageNavigate('status')">Status</button> -->
         <button id="button_page_config" onclick="pageNavigate('config')">Config</button>
-        <button id="button_page_about"  onclick="pageNavigate('about')">About</button>
+        <!-- <button id="button_page_about"  onclick="pageNavigate('about')">About</button> -->
       </div>
     </div>
 
@@ -495,10 +495,7 @@ const NETWORK_WIFI_MODE_STA = 1;
         "staWifiSsid": "input[name=config_device_sta_ssid]",
         "staWifiPassword": "input[name=config_device_sta_password]"
       };
-
-      let wsAddr = "ws://" + document.location.host + document.location.pathname;
-      wsAddr += (document.location.pathname == '/') ? "ws" : "/ws";
-      ws = new WebSocket(wsAddr);
+      ws = null;
       function loadConfig() {
         let request_config = new Uint8Array(4);
         request_config[0] = PKT_TYPE_READ_CONFIG;
@@ -545,10 +542,6 @@ const NETWORK_WIFI_MODE_STA = 1;
         let packetArray = new Uint8Array(packetHdrArray.length * 2 + displayConfigArray.length * 4);
         packetArray.set(new Uint8Array(packetHdrArray.buffer), 0);
         packetArray.set(new Uint8Array(displayConfigArray.buffer), packetHdrArray.length * 2);
-        // print first 8 bytes
-        for (let i = 0; i < packetArray.length; i++) {
-          console.log("packetArray[" + i + "] = " + packetArray[i]);
-        }
         ws.send(packetArray);
       }
       function saveNetworkConfig() {
@@ -614,7 +607,7 @@ const NETWORK_WIFI_MODE_STA = 1;
             stripConfigs.push(cfg);
           }
         }
-        console.log("Saving strip config", stripConfigs);
+        // console.log("Saving strip config", stripConfigs);
         let stripConfigArray = new Uint8Array(8 + CONFIG_MAX_STRIPS * 6);
         let dv = new DataView(stripConfigArray.buffer);
         dv.setUint32(0, 2, true);
@@ -640,130 +633,149 @@ const NETWORK_WIFI_MODE_STA = 1;
         saveNetworkConfig();
         saveStripConfig();
       }
-      ws.onopen = function() {
-        console.log("Connected to server");
-        loadNetworkConfig();
-        loadConfig();
-        loadStripConfig();
-      };
-      ws.onmessage = async function(event) {
-        const arrayBuffer = await new Response(event.data).arrayBuffer();
-        if (arrayBuffer.byteLength < 4) {
-          console.log("Received invalid message");
-          return;
-        }
-        let pktU8 = new Uint8Array(arrayBuffer);
-        let pktU16 = new Uint16Array(arrayBuffer);
-        let pktU32 = new Uint32Array(arrayBuffer);
-        // get packet type and packet_hdr_t
-        let packetType = pktU16[0];
-        let packetLen = pktU16[1];
-        console.log("Packet type: " + packetType + " Packet length: " + packetLen);
-        if (packetType == PKT_TYPE_READ_NETWORK_CONFIG) {
-          // read display_network_config_t
-          let pkt = new DataView(arrayBuffer, 4);
-          let version = pkt.getUint32(0, true);
-          let magic = pkt.getUint32(4, true).toString(16);
-          let networkConfig = {
-            "version": pkt.getUint32(0, true),
-            "magic": pkt.getUint32(4, true),
-            "port": pkt.getUint16(8, true),
-            "wifiMode": pkt.getUint8(10),
-            "reserved": [pkt.getUint8(11), pkt.getUint8(12), pkt.getUint8(13), pkt.getUint8(14), pkt.getUint8(15)],
-            "hostname": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16, 64)),
-            "apWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64, 32)),
-            "apWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32, 64)),
-            "staWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64, 32)),
-            "staWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64 + 32, 64))
-          };
-          let pageTitle = "ESP32 RGB - " + networkConfig["hostname"];
-          document.title = pageTitle;
-          // fix zero termination from c-strings
-          for (let key in networkConfig) {
-            if (typeof networkConfig[key] == "string") {
-              networkConfig[key] = networkConfig[key].split("\0")[0];
-            }
+      function connectWS() {
+        let wsAddr = "ws://" + document.location.host + document.location.pathname;
+        wsAddr += (document.location.pathname == '/') ? "ws" : "/ws";
+        wsAddr = "ws://192.168.188.65/ws";
+        ws = new WebSocket(wsAddr);
+        ws.onopen = function() {
+          loadNetworkConfig();
+          loadConfig();
+          loadStripConfig();
+        };
+        ws.onmessage = async function(event) {
+          const arrayBuffer = await new Response(event.data).arrayBuffer();
+          if (arrayBuffer.byteLength < 4) {
+            console.log("Received invalid message");
+            return;
           }
-          console.log("Received network config", version, magic, networkConfig);
-          // update document
-          try {
-            for (let key in networkConfig) {
-              let cssSelector = MAPPING_STRUCT_NETWORK_CONFIG_CSS_SELECTOR[key];
-              if (cssSelector) {
-                document.querySelector(cssSelector).value = networkConfig[key];
-              }
-            }
-          } catch (e) {
-            console.log("Error updating document", e);
-          }
-        }
-        if (packetType == PKT_TYPE_CONFIG_ALL) {
-          // reasd display_config_t
-          let pkt = new DataView(arrayBuffer, 4);
-          let version = pkt.getUint32(0, true);
-          let magic = pkt.getUint32(4, true).toString(16);
-          const displayConfigJson = {
-            "version": pkt.getUint32(0, true),
-            "magic": pkt.getUint32(4, true),
-            "rmtClockResolution_hz": pkt.getUint32(8, true),
-            "dimensionsWidth": pkt.getUint32(12, true),
-            "dimensionsHeight": pkt.getUint32(16, true),
-            "heartbeatIntervalFrames": pkt.getUint32(20, true),
-            "stripsEnable": pkt.getUint32(24, true),
-            "debugFlags": pkt.getUint32(28, true),
-            "frameRate": pkt.getUint16(32, true),
-            "maxBrightness": pkt.getUint8(34),
-            "isRGBW": pkt.getUint8(35)
-          };
-          console.log("Received display config", version, magic, displayConfigJson);
-          // update document 
-          try{
-            for (let key in displayConfigJson) {
-              let cssSelector = MAPPING_STRUCT_CONFIG_CSS_SELECTOR[key];
-              if (cssSelector) {
-                document.querySelector(cssSelector).value = displayConfigJson[key];
-              }
-            }
-          } catch (e) {
-            console.log("Error updating document", e);
-          }
-
-        }
-        if (packetType == PKT_TYPE_READ_STRIP_CONFIG_ALL) {
-          // read display_led_strip_config_all_t
-          let pkt = new DataView(arrayBuffer, 4);
-          let version = pkt.getUint32(0, true);
-          let magic = pkt.getUint32(4, true).toString(16);
-          console.log("Received strip config", version, magic);
-          let stripConfigs = [];
-          for (let i = 0; i < CONFIG_MAX_STRIPS; i++) {
-            let stripConfig = {
-              // int16_t
-              "gpio":     pkt.getInt16(8 + i * 6, true),
-              // uint16_t
-              "ledCount": pkt.getUint16(10 + i * 6, true),
-              // uint8_t
-              "ledType":  pkt.getUint8(12 + i * 6),
-              // uint8_t
-              "dataTypeId": pkt.getUint8(13 + i * 6)
+          let pktU8 = new Uint8Array(arrayBuffer);
+          let pktU16 = new Uint16Array(arrayBuffer);
+          let pktU32 = new Uint32Array(arrayBuffer);
+          // get packet type and packet_hdr_t
+          let packetType = pktU16[0];
+          let packetLen = pktU16[1];
+          console.log("Packet type: " + packetType + " Packet length: " + packetLen);
+          if (packetType == PKT_TYPE_READ_NETWORK_CONFIG) {
+            // read display_network_config_t
+            let pkt = new DataView(arrayBuffer, 4);
+            let version = pkt.getUint32(0, true);
+            let magic = pkt.getUint32(4, true).toString(16);
+            let networkConfig = {
+              "version": pkt.getUint32(0, true),
+              "magic": pkt.getUint32(4, true),
+              "port": pkt.getUint16(8, true),
+              "wifiMode": pkt.getUint8(10),
+              "reserved": [pkt.getUint8(11), pkt.getUint8(12), pkt.getUint8(13), pkt.getUint8(14), pkt.getUint8(15)],
+              "hostname": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16, 64)),
+              "apWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64, 32)),
+              "apWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32, 64)),
+              "staWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64, 32)),
+              "staWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64 + 32, 64))
             };
-            stripConfigs.push(stripConfig);
-          }
-          console.log("Received strip config all", stripConfigs);
-          for (let i = 0; i < stripConfigs.length; i++) {
-            let config_name = "stripconfig_" + i;
-            let stripconfig = document.getElementById(config_name);
-            if (stripconfig) {
-              let cfg = stripConfigs[i];
-              stripconfig.querySelector("input[name=config_led_strip_gpio]").value = cfg.gpio;
-              stripconfig.querySelector("select[name=config_led_strip_led_type]").value = cfg.ledType;
-              stripconfig.querySelector("select[name=config_led_strip_data_type]").value = cfg.dataTypeId;
-              stripconfig.querySelector("input[name=config_led_strip_led_count]").value = cfg.ledCount;
+            let pageTitle = "ESP32 RGB - " + networkConfig["hostname"];
+            document.title = pageTitle;
+            // fix zero termination from c-strings
+            for (let key in networkConfig) {
+              if (typeof networkConfig[key] == "string") {
+                networkConfig[key] = networkConfig[key].split("\0")[0];
+              }
+            }
+            console.log("Received network config", version, magic, networkConfig);
+            // update document
+            try {
+              for (let key in networkConfig) {
+                let cssSelector = MAPPING_STRUCT_NETWORK_CONFIG_CSS_SELECTOR[key];
+                if (cssSelector) {
+                  document.querySelector(cssSelector).value = networkConfig[key];
+                }
+              }
+            } catch (e) {
+              console.log("Error updating document", e);
             }
           }
-        }
-      };
+          if (packetType == PKT_TYPE_CONFIG_ALL) {
+            // reasd display_config_t
+            let pkt = new DataView(arrayBuffer, 4);
+            let version = pkt.getUint32(0, true);
+            let magic = pkt.getUint32(4, true).toString(16);
+            const displayConfigJson = {
+              "version": pkt.getUint32(0, true),
+              "magic": pkt.getUint32(4, true),
+              "rmtClockResolution_hz": pkt.getUint32(8, true),
+              "dimensionsWidth": pkt.getUint32(12, true),
+              "dimensionsHeight": pkt.getUint32(16, true),
+              "heartbeatIntervalFrames": pkt.getUint32(20, true),
+              "stripsEnable": pkt.getUint32(24, true),
+              "debugFlags": pkt.getUint32(28, true),
+              "frameRate": pkt.getUint16(32, true),
+              "maxBrightness": pkt.getUint8(34),
+              "isRGBW": pkt.getUint8(35)
+            };
+            console.log("Received display config", version, magic, displayConfigJson);
+            // update document 
+            try{
+              for (let key in displayConfigJson) {
+                let cssSelector = MAPPING_STRUCT_CONFIG_CSS_SELECTOR[key];
+                if (cssSelector) {
+                  document.querySelector(cssSelector).value = displayConfigJson[key];
+                }
+              }
+            } catch (e) {
+              console.log("Error updating document", e);
+            }
+
+          }
+          if (packetType == PKT_TYPE_READ_STRIP_CONFIG_ALL) {
+            // read display_led_strip_config_all_t
+            let pkt = new DataView(arrayBuffer, 4);
+            let version = pkt.getUint32(0, true);
+            let magic = pkt.getUint32(4, true).toString(16);
+            console.log("Received strip config", version, magic);
+            let stripConfigs = [];
+            for (let i = 0; i < CONFIG_MAX_STRIPS; i++) {
+              let stripConfig = {
+                // int16_t
+                "gpio":     pkt.getInt16(8 + i * 6, true),
+                // uint16_t
+                "ledCount": pkt.getUint16(10 + i * 6, true),
+                // uint8_t
+                "ledType":  pkt.getUint8(12 + i * 6),
+                // uint8_t
+                "dataTypeId": pkt.getUint8(13 + i * 6)
+              };
+              stripConfigs.push(stripConfig);
+            }
+            console.log("Received strip config all", stripConfigs);
+            for (let i = 0; i < stripConfigs.length; i++) {
+              let config_name = "stripconfig_" + i;
+              let stripconfig = document.getElementById(config_name);
+              if (stripconfig) {
+                let cfg = stripConfigs[i];
+                stripconfig.querySelector("input[name=config_led_strip_gpio]").value = cfg.gpio;
+                stripconfig.querySelector("select[name=config_led_strip_led_type]").value = cfg.ledType;
+                stripconfig.querySelector("select[name=config_led_strip_data_type]").value = cfg.dataTypeId;
+                stripconfig.querySelector("input[name=config_led_strip_led_count]").value = cfg.ledCount;
+              }
+            }
+          }
+        };
+        ws.onclose = function(e) {
+          console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+          setTimeout(function() {
+            connectWS();
+          }, 1000);
+        };
+
+        ws.onerror = function(err) {
+          console.error('Socket encountered error: ', err.message, 'Closing socket');
+          ws.close();
+        };
+      }
       pageNavigate("config");
+      setTimeout(function() {
+        connectWS();
+      }, 333);
     </script>
 </body>
 

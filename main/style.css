@@ -113,9 +113,6 @@ select {
   margin-bottom: 32px;
 }
 
-.page_content.tabcontent-visible {
-  display: block;
-}
 #stripconfig_base {
   display: none;
   visibility: hidden;
@@ -133,6 +130,13 @@ select {
   gap: 1vw;
   justify-content: center;
   align-items: center;
+  display: none;
+}
+#page_config.tabcontent-visible {
+  display: grid;
+}
+.page_content.tabcontent-visible {
+  display: grid;
 }
 
 
