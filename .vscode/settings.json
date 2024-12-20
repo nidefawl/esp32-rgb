@@ -1,7 +1,12 @@
 {
-  "idf.adapterTargetName": "esp32",
+  "idf.adapterTargetName": "esp32s3",
   "idf.flashType": "UART",
   "idf.openOcdConfigs": [
-    "board/esp32-wrover-kit-3.3v.cfg"
-  ]
+    "board/esp32s3-builtin.cfg"
+  ],
+  "idf.port": "/dev/ttyACM0",
+  "idf.espIdfPath": "/home/michael/esp/v5.3.1/esp-idf",
+  "idf.toolsPath": "/home/michael/esp-dev/esp32",
+  "clangd.path": "/home/michael/esp-dev/esp32/tools/esp-clang/16.0.1-fe4f10a809/esp-clang/bin/clangd",
+  "clangd.arguments": ["--log=error", "--query-driver=/home/michael/esp-dev/esp32/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc"],
 }
