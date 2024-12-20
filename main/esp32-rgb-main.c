@@ -454,6 +454,7 @@ static void display_load_config_from_flash() {
     display_strip_config_set(&ledStripConfigAll, false);
     ESP_LOGI(TAG, "Loaded LED strip config from flash");
   }
+  bDisplayConfigChanged = false;
   xSemaphoreGive(semaphoreDisplay);
 }
 
