@@ -14,7 +14,6 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "portmacro.h"
-#include "network.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
