@@ -134,7 +134,7 @@ static const httpd_uri_t endpoint_css = {
     .user_ctx = NULL
 };
 
-esp_err_t example_register_uri_handler(httpd_handle_t server)
+esp_err_t webinterface_register_uri_handler(httpd_handle_t server)
 {
     esp_err_t ret = ESP_OK;
     ret = httpd_register_uri_handler(server, &endpoint_html);

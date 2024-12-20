@@ -89,9 +89,10 @@ static StaticSemaphore_t s_semaphoreDisplay;
 static SemaphoreHandle_t semaphoreNetwork = NULL;
 static SemaphoreHandle_t semaphoreNetworkMasterAddress = NULL;
 static SemaphoreHandle_t semaphoreSocketStart = NULL;
-static int g_socket_udp = -1;
 struct sockaddr_storage g_udp_master_address = {};
 static int64_t g_timeLastFrame_us = 0;
+static uint8_t udp_rx_buffer[4096];
+static int s_socket = -1;
 
 static void display_state_reset() {
   memset((void*)ledsBuffer, 0, sizeof(ledsBuffer));
@@ -630,7 +631,7 @@ static void display_strips_update(void* arg)
           .bufferFillLevel = display_get_buffer_fillstate(),
       },
     };
-    int socket = g_socket_udp;
+    int socket = s_socket;
     if (socket != -1) {
       if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
         if (g_udp_master_address.s2_len) {
@@ -756,7 +757,7 @@ static void led_display_task() {
     }
 
     // Broadcast packet handling
-    int socket = g_socket_udp;
+    int socket = s_socket;
     if (socket != -1) {
       if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
         if (!g_udp_master_address.s2_len) {
@@ -1007,10 +1008,6 @@ bool display_handle_websocket_packet(httpd_req_t *req, httpd_ws_frame_t* ws_pkt)
   return false;
 }
 
-
-
-static uint8_t udp_rx_buffer[4096];
-static int s_socket = -1;
 static void udp_server_task(void* pvParameters) {
   char addr_str[128];
 #if CONFIG_USE_IPV6
@@ -1039,11 +1036,10 @@ static void udp_server_task(void* pvParameters) {
       shutdown(s_socket, 0);
       close(s_socket);
       s_socket = -1;
-      g_socket_udp = -1;
     }
 
-    s_socket = socket(addr_family, SOCK_DGRAM, ip_protocol);
-    if (s_socket < 0) {
+    int newSocket = socket(addr_family, SOCK_DGRAM, ip_protocol);
+    if (newSocket < 0) {
       ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
       break;
     }
@@ -1053,7 +1049,7 @@ static void udp_server_task(void* pvParameters) {
       // Note that by default IPV6 binds to both protocols, it is must be
       // disabled if both protocols used at the same time (used in CI)
       int opt = 1;
-      setsockopt(s_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+      setsockopt(newSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     }
 #endif
 
@@ -1062,18 +1058,18 @@ static void udp_server_task(void* pvParameters) {
     bzero(&timeout, sizeof(timeout));
     timeout.tv_sec  = 0;
     timeout.tv_usec = 0;
-    setsockopt(s_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+    setsockopt(newSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 
-    int err = bind(s_socket, (struct sockaddr*) &dest_addr, sizeof(dest_addr));
+    int err = bind(newSocket, (struct sockaddr*) &dest_addr, sizeof(dest_addr));
     if (err < 0) {
       ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
     }
     int broadcastValue = 1;
-    err = setsockopt(s_socket, SOL_SOCKET, SO_BROADCAST, &broadcastValue, sizeof(broadcastValue));
+    err = setsockopt(newSocket, SOL_SOCKET, SO_BROADCAST, &broadcastValue, sizeof(broadcastValue));
     if (err < 0) {
       ESP_LOGE(TAG, "Socket unable to set broadcast: errno %d", errno);
     }
-    g_socket_udp = s_socket;
+    s_socket = newSocket;
 
     struct sockaddr_storage source_addr;// Large enough for both IPv4 or IPv6
     socklen_t socklen = sizeof(source_addr);
@@ -1114,7 +1110,7 @@ static void initialise_mdns(void)
     ESP_ERROR_CHECK(mdns_service_add(TAG, "_http", "_tcp", 80, serviceTxtData,
                                      sizeof(serviceTxtData) / sizeof(serviceTxtData[0])));
 }
-esp_err_t example_register_uri_handler(httpd_handle_t server);
+esp_err_t webinterface_register_uri_handler(httpd_handle_t server);
 
 static void connect_handler(void *arg, esp_event_base_t event_base,
                             int32_t event_id, void *event_data)
@@ -1129,6 +1125,20 @@ static void connect_handler_ipv6(void *arg, esp_event_base_t event_base,
     if (semaphoreNetwork) {
       xSemaphoreGive(semaphoreNetwork);
     }
+}
+static void disconnect_handler_wifi(void *arg, esp_event_base_t event_base,
+                        int32_t event_id, void *event_data)
+{
+  if (s_socket != -1) {
+    shutdown(s_socket, 0);
+    close(s_socket);
+    s_socket = -1;
+    // clear g_udp_master_address
+    if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
+      memset(&g_udp_master_address, 0, sizeof(g_udp_master_address));
+      xSemaphoreGive(semaphoreNetworkMasterAddress);
+    }
+  }
 }
 
 void app_main(void) {
@@ -1156,6 +1166,7 @@ void app_main(void) {
   xTaskCreatePinnedToCore(led_display_task, "led_display", 4096, NULL, 6, NULL, 1);
   ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &connect_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_GOT_IP6, &connect_handler_ipv6, NULL));
+  ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &disconnect_handler_wifi, NULL));
   
   initialise_mdns();
   netbiosns_init();
@@ -1168,7 +1179,7 @@ void app_main(void) {
   strncpy(cfg.staWifiSsid, displayNetworkConfig.staWifiSsid, sizeof(cfg.staWifiSsid));
   strncpy(cfg.staWifiPassword, displayNetworkConfig.staWifiPassword, sizeof(cfg.staWifiPassword));
   nvs_wifi_connect(&cfg);
-  nvs_wifi_connect_start_http_server(NVS_WIFI_CONNECT_MODE_RESTART_ESP32, example_register_uri_handler); // run server
+  nvs_wifi_connect_start_http_server(NVS_WIFI_CONNECT_MODE_RESTART_ESP32, webinterface_register_uri_handler);
   xTaskCreate(udp_server_task, "udp_server", 4096*2, (void*) 0, 5, NULL);
   while (1) {
     xSemaphoreTake(semaphoreNetwork, portMAX_DELAY);
