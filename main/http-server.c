@@ -21,7 +21,7 @@
 
 /* A simple example that demonstrates using websocket echo server
  */
-static const char *TAG = "example_ws_echo_server";
+static const char *TAG = "WEBSERVER";
 
 bool display_handle_websocket_packet(httpd_req_t *req, httpd_ws_frame_t* ws_pkt);
  
@@ -41,7 +41,7 @@ static esp_err_t websocket_server(httpd_req_t *req)
         ESP_LOGE(TAG, "httpd_ws_recv_frame failed to get frame len with %d", ret);
         return ret;
     }
-    ESP_LOGI(TAG, "frame len is %d", ws_pkt.len);
+    // ESP_LOGI(TAG, "frame len is %d", ws_pkt.len);
     if (ws_pkt.len) {
         /* ws_pkt.len + 1 is for NULL termination as we are expecting a string */
         buf = calloc(1, ws_pkt.len + 1);
@@ -59,7 +59,7 @@ static esp_err_t websocket_server(httpd_req_t *req)
         }
     }
     // print the type of frame
-    switch (ws_pkt.type) {
+    /* switch (ws_pkt.type) {
         case HTTPD_WS_TYPE_TEXT:
             ESP_LOGI(TAG, "Received TEXT frame");
             break;
@@ -79,9 +79,8 @@ static esp_err_t websocket_server(httpd_req_t *req)
             ESP_LOGI(TAG, "Received UNKNOWN frame");
             ESP_LOGI(TAG, "Packet type: %d", ws_pkt.type);
             break;
-    }
+    } */
     if (!display_handle_websocket_packet(req, &ws_pkt)) {
-        ESP_LOGI(TAG, "Send default response");
         ret = httpd_ws_send_frame(req, &ws_pkt);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "httpd_ws_send_frame failed with %d", ret);
