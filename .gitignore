@@ -1,3 +1,6 @@
 .cache/
 build*/
 managed_components/
+__pycache__/
+tools/
+sdkconfig*
