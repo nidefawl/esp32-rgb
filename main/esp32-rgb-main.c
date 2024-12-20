@@ -346,8 +346,10 @@ static esp_err_t read_nvs_struct(const char* key, void* data, size_t len) {
 
 void write_strip_config(display_led_strip_config_all_t* config) {
   if (display_strip_config_validate(config)) {
+    xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
     display_strip_config_set(config, true);
     write_nvs_struct("strip_config", config, sizeof(display_led_strip_config_all_t));
+    xSemaphoreGive(semaphoreDisplay);
     ESP_LOGI(TAG, "Set LED strip config all");
   } else {
     ESP_LOGE(TAG, "Invalid LED strip config all");
@@ -747,9 +749,11 @@ static void led_display_task() {
 
     // Write config updates to nvs
     if (bDisplayConfigChanged) {
+      xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
       bDisplayConfigChanged = false;
       write_nvs_struct("display_config", &displayConfig, sizeof(display_config_t));
       ESP_LOGI(TAG, "wrote display config to flash");
+      xSemaphoreGive(semaphoreDisplay);
     }
 
     // Broadcast packet handling
