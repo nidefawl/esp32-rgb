@@ -36,7 +36,13 @@
 #define CONFIG_USE_IPV4 1
 #define CONFIG_USE_IPV6 1
 #define CONFIG_MAX_LEDS 30
+
 #define CONFIG_USE_ASYNC_RMT 1
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+#define MAX_RMT_CHANNELS 4
+#else
+#define MAX_RMT_CHANNELS 8
+#endif
 
 #define LED_UDP_LISTEN_PORT 54321
 #define DISPLAY_CONFIG_VERSION 2
@@ -482,7 +488,8 @@ static led_strip_handle_t display_led_strip_configure(uint32_t stripIndex, displ
     ESP_LOGE(TAG, "Invalid strip index");
     return NULL;
   }
-  // LED strip general initialization, according to your led board design
+
+  // LED strip general initialization
   led_strip_config_t strip_config = {
     .strip_gpio_num = stripConfig->gpio,        // The GPIO that connected to the LED strip's data line
     .max_leds       = config->dimensionsHeight, // Number of LEDs in your strip
@@ -491,14 +498,8 @@ static led_strip_handle_t display_led_strip_configure(uint32_t stripIndex, displ
     .flags.invert_out = false,// whether to invert the output signal
   };
 
-  // LED Strip object handle
+
   led_strip_handle_t led_strip;
-//4 on ESP32-S3
-#ifdef CONFIG_IDF_TARGET_ESP32S3
-#define MAX_RMT_CHANNELS 4
-#else
-#define MAX_RMT_CHANNELS 8
-#endif
   if (stripIndex < MAX_RMT_CHANNELS) {
     // LED strip backend configuration: RMT
     led_strip_rmt_config_t rmt_config = {
@@ -557,12 +558,9 @@ static inline uint32_t display_get_buffer_fillstate() {
 static void display_strips_update(void* arg)
 {
   xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
+
   // check if we can read the next frame
   const bool bCanRead = displayState.readIndex < displayState.writeIndex;
-  // log positions and frame
-  /* if (displayConfig.debugFlags&2) {
-    ESP_LOGI(TAG, "timer: Read %llu - Write %llu - CanRead %d", displayState.readIndex, displayState.writeIndex, bCanRead);
-  } */
   uint8_t color[4] = {};
   const uint32_t dimW = displayConfig.dimensionsWidth;
   const uint32_t dimH = displayConfig.dimensionsHeight;
@@ -637,7 +635,6 @@ static void display_strips_update(void* arg)
             send_udp_packet(socket, &g_udp_master_address, &heartbeat, sizeof(heartbeat));
             int heartbeatsPerSecond = displayConfig.frameRate / displayConfig.heartbeatIntervalFrames;
             if (displayState.bRuntimeStatsEnabled && displayState.numCallbacks % heartbeatsPerSecond == 0) {
-              // send stats every second
               struct packet_runtime_stats_t stats = {
                 .header = {
                   .packetType = PKT_TYPE_RUNTIME_STATS,
@@ -669,13 +666,16 @@ static void display_strips_update(void* arg)
   } else {
     if (displayState.numFrames > 0) {
       displayState.numBufferUnderrun++;
-      // if we haven't received a frame in 5 seconds, reset the master address
+      // if we haven't received a frame in 5 seconds, reset the master address so broadcasts are sent again
       if (esp_timer_get_time() - g_timeLastFrame_us > 5e6) {
         if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
           g_timeLastFrame_us = esp_timer_get_time();
+          bool bHadMaster = g_udp_master_address.s2_len > 0;
           memset(&g_udp_master_address, 0, sizeof(g_udp_master_address));
           xSemaphoreGive(semaphoreNetworkMasterAddress);
-          ESP_LOGI(TAG, "Resetting master address");
+          if (bHadMaster) {
+            ESP_LOGI(TAG, "Resetting master address");
+          }
         }
       }
     }
@@ -730,6 +730,7 @@ static void led_display_task() {
     int64_t numFrames = displayState.numFrames - displayState.numLastFrames;
     int64_t numCallbacks = displayState.numCallbacks - displayState.numLastCallbacks;
     int64_t timeSince_us = esp_timer_get_time() - timeLastFPS_us;
+
     // print FPS stats every 5 seconds
     if (timeSince_us > 5 * 1e6) {
       displayState.fps_actual = numFrames / (((float) timeSince_us) / 1e6);
@@ -742,16 +743,19 @@ static void led_display_task() {
       displayState.numLastFrames = displayState.numFrames;
       displayState.numLastCallbacks = displayState.numCallbacks;
     }
+
+    // Write config updates to nvs
     if (bDisplayConfigChanged) {
       bDisplayConfigChanged = false;
       write_nvs_struct("display_config", &displayConfig, sizeof(display_config_t));
       ESP_LOGI(TAG, "wrote display config to flash");
     }
+
+    // Broadcast packet handling
     int socket = g_socket_udp;
     if (socket != -1) {
       if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
         if (!g_udp_master_address.s2_len) {
-          // send a broadcast packet to find the master
           struct packet_broadcast_t pkt = {
             .header = {
               .packetType = PKT_TYPE_ANNOUNCE_BROADCAST,
@@ -954,17 +958,12 @@ void display_handle_packet(uint8_t* rx_buffer, int len, int sock,
         ledsBuffer[writeIdx][stripIndex][ledStripIndex] = pData[frameIdx];
       }
       displayState.writeIndex = (displayState.writeIndex + 1);
-      /* if (displayConfig.debugFlags&2) {
-        ESP_LOGI(TAG, "Network: Read %llu - Write %llu", displayState.readIndex, displayState.writeIndex);
-      } */
   }
 }
 void send_websocket_packet(httpd_req_t *req, httpd_ws_frame_t* ws_pkt, void* message, int len) {
-  // httpd_ws_frame_t ws_pkt;
   ws_pkt->payload = message;
   ws_pkt->len = len;
   ws_pkt->type = HTTPD_WS_TYPE_BINARY;
-  // update req 
   int ret = httpd_ws_send_frame(req, ws_pkt);
   if (ret != ESP_OK) {
       ESP_LOGE(TAG, "httpd_ws_send_frame failed with %d", ret);
@@ -1053,7 +1052,6 @@ static void udp_server_task(void* pvParameters) {
       // disabled if both protocols used at the same time (used in CI)
       int opt = 1;
       setsockopt(s_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-      // setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
     }
 #endif
 
@@ -1086,6 +1084,7 @@ static void udp_server_task(void* pvParameters) {
         ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
         break;
       }
+
       // Get the sender's ip address as string
       if (source_addr.ss_family == PF_INET) {
         inet_ntoa_r(((struct sockaddr_in*) &source_addr)->sin_addr, addr_str,
@@ -1094,12 +1093,6 @@ static void udp_server_task(void* pvParameters) {
         inet6_ntoa_r(((struct sockaddr_in6*) &source_addr)->sin6_addr, addr_str,
                      sizeof(addr_str) - 1);
       }
-
-      /* ESP_LOGI(TAG, "Received %d bytes from %s", len, addr_str);
-      // print first 8 bytes as hex
-      for (int i = 0; i < 8 && i < len; i++) {
-        ESP_LOGI(TAG, "rx_buffer[%d] = 0x%02x", i, rx_buffer[i]);
-      } */
 
       display_handle_packet(udp_rx_buffer, len, s_socket, &source_addr, addr_str);
     }
@@ -1174,8 +1167,6 @@ void app_main(void) {
   strncpy(cfg.staWifiPassword, displayNetworkConfig.staWifiPassword, sizeof(cfg.staWifiPassword));
   nvs_wifi_connect(&cfg);
   nvs_wifi_connect_start_http_server(NVS_WIFI_CONNECT_MODE_RESTART_ESP32, example_register_uri_handler); // run server
-  // ESP_ERROR_CHECK(network_connect());
-  // ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
   xTaskCreate(udp_server_task, "udp_server", 4096*2, (void*) 0, 5, NULL);
   while (1) {
     xSemaphoreTake(semaphoreNetwork, portMAX_DELAY);
