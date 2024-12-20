@@ -31,6 +31,8 @@ enum RGBNetworkPacketType : uint8_t {
   PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8,
   PKT_TYPE_READ_NETWORK_CONFIG    = 9,
   PKT_TYPE_WRITE_NETWORK_CONFIG   = 10,
+  PKT_TYPE_ANNOUNCE_BROADCAST     = 11,
+  PKT_TYPE_CONFIG_RESPONSE        = 12,
   PKT_NUM_TYPES,
 };
 
@@ -145,6 +147,19 @@ struct request_heartbeat_message_t {
   uint8_t flags;  // bitmask of flags
 };
 
+enum config_category_e : uint32_t {
+  CONFIG_CATEGORY_DISPLAY = 0,
+  CONFIG_CATEGORY_NETWORK = 1,
+  CONFIG_CATEGORY_STRIPS = 2,
+  CONFIG_CATEGORY_NUM,
+};
+
+struct config_response_message_t {
+  uint32_t cfgEnum;
+  int32_t status; // 0: success, 1: error
+  char errorMsg[CONFIG_ERR_MSG_BUF_SIZE];
+};
+
 struct packet_heartbeat_t {
   struct packet_hdr_t header;
   struct heartbeat_message_t message;
@@ -179,6 +194,16 @@ struct packet_strip_config_all_t {
   display_led_strip_config_all_t message;
 };
 
+struct packet_broadcast_t {
+  struct packet_hdr_t header;
+  int message;
+};
+
+struct packet_config_response_t {
+  struct packet_hdr_t header;
+  struct config_response_message_t message;
+};
+
 #pragma pack(pop)
 
 */
@@ -194,7 +219,9 @@ const PKT_TYPE_READ_STRIP_CONFIG_ALL = 7;
 const PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8;
 const PKT_TYPE_READ_NETWORK_CONFIG = 9;
 const PKT_TYPE_WRITE_NETWORK_CONFIG = 10;
-const PKT_NUM_TYPES = 11;
+const PKT_TYPE_ANNOUNCE_BROADCAST   = 11;
+const PKT_TYPE_CONFIG_RESPONSE      = 12;
+const PKT_NUM_TYPES = 13;
 
 const CFG_ID_DIMENSIONS_WIDTH = 0;
 const CFG_ID_DIMENSIONS_HEIGHT = 1;
@@ -204,6 +231,10 @@ const CFG_ID_STRIPS_ENABLE = 4;
 const CFG_ID_ENABLE_DEBUG = 5;
 const CFG_ID_HEARTBEAT_INTERVAL_FRAMES = 6;
 const CFG_NUM_CONFIGS = 7;
+
+const CONFIG_CATEGORY_DISPLAY = 0;
+const CONFIG_CATEGORY_NETWORK = 1;
+const CONFIG_CATEGORY_STRIPS = 2;
 
 const RGB_DATA_TYPE_RGB = 0;
 const RGB_DATA_TYPE_RGBW = 1;
@@ -407,7 +438,7 @@ const NETWORK_WIFI_MODE_STA = 1;
               </div>
             </fieldset>
           </div>
-          <button onclick="saveStripConfig()" class="btn">Save</button>
+          <button onclick="saveStripConfig()" class="btn" id="btnStripConfigSave">Save</button>
         </fieldset>
         <br>
       </div>
@@ -496,20 +527,24 @@ const NETWORK_WIFI_MODE_STA = 1;
         "staWifiPassword": "input[name=config_device_sta_password]"
       };
       ws = null;
+      commstate = 0;
       function loadConfig() {
         let request_config = new Uint8Array(4);
         request_config[0] = PKT_TYPE_READ_CONFIG;
-        ws.send(request_config);
+        if (ws != null)
+          ws.send(request_config);
       }
       function loadStripConfig() {
         let request_config = new Uint8Array(4);
         request_config[0] = PKT_TYPE_READ_STRIP_CONFIG_ALL;
-        ws.send(request_config);
+        if (ws != null)
+          ws.send(request_config);
       }
       function loadNetworkConfig() {
         let request_config = new Uint8Array(4);
         request_config[0] = PKT_TYPE_READ_NETWORK_CONFIG;
-        ws.send(request_config);
+        if (ws != null)
+          ws.send(request_config);
       }
       function saveConfig() {
         let displayConfig = {};
@@ -633,15 +668,19 @@ const NETWORK_WIFI_MODE_STA = 1;
         saveNetworkConfig();
         saveStripConfig();
       }
+      function reloadConfig() {
+        loadNetworkConfig();
+        loadConfig();
+        loadStripConfig();
+      }
       function connectWS() {
         let wsAddr = "ws://" + document.location.host + document.location.pathname;
         wsAddr += (document.location.pathname == '/') ? "ws" : "/ws";
-        wsAddr = "ws://192.168.188.65/ws";
+        // wsAddr = "ws://192.168.188.65/ws";
         ws = new WebSocket(wsAddr);
         ws.onopen = function() {
-          loadNetworkConfig();
-          loadConfig();
-          loadStripConfig();
+          commstate = 1;
+          reloadConfig();
         };
         ws.onmessage = async function(event) {
           const arrayBuffer = await new Response(event.data).arrayBuffer();
@@ -667,11 +706,11 @@ const NETWORK_WIFI_MODE_STA = 1;
               "port": pkt.getUint16(8, true),
               "wifiMode": pkt.getUint8(10),
               "reserved": [pkt.getUint8(11), pkt.getUint8(12), pkt.getUint8(13), pkt.getUint8(14), pkt.getUint8(15)],
-              "hostname": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16, 64)),
-              "apWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64, 32)),
-              "apWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32, 64)),
-              "staWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64, 32)),
-              "staWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64 + 32, 64))
+              "hostname": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16, 64)).split("\0").shift(),
+              "apWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64, 32)).split("\0").shift(),
+              "apWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32, 64)).split("\0").shift(),
+              "staWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64, 32)).split("\0").shift(),
+              "staWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64 + 32, 64)).split("\0").shift()
             };
             let pageTitle = "ESP32 RGB - " + networkConfig["hostname"];
             document.title = pageTitle;
@@ -692,6 +731,32 @@ const NETWORK_WIFI_MODE_STA = 1;
               }
             } catch (e) {
               console.log("Error updating document", e);
+            }
+          }
+          if (packetType == PKT_TYPE_CONFIG_RESPONSE) {
+            // read config_response_message_t
+            let pkt = new DataView(arrayBuffer, 4);
+            let cat = pkt.getInt32(0, true);
+            let status = pkt.getInt32(4, true);
+            let errorMsg = new TextDecoder().decode(new Uint8Array(arrayBuffer, 12, packetLen-12)).split("\0").shift();
+            let colorHex = status == 0 ? "#55dd55" : "#dd5555";
+            let colorPre = "<span style='color: " + colorHex + "'>";
+            let colorPost = "</span>";
+            if (status == 0) {
+              errorMsg = "Success";
+            }
+            switch (cat) {
+              case CONFIG_CATEGORY_DISPLAY:
+                document.querySelector(".container_device_led_config>div>button").innerHTML = "Save<br>"+colorPre+"(" + errorMsg + ")"+colorPost;
+                break;
+              case CONFIG_CATEGORY_NETWORK:
+                document.querySelector(".container_device_network_config>div>button").innerHTML = "Save<br>"+colorPre+"(" + errorMsg + ")"+colorPost;
+                break;
+              case CONFIG_CATEGORY_STRIPS:
+                document.querySelector("#btnStripConfigSave").innerHTML = "Save<br>"+colorPre+"(" + errorMsg + ")"+colorPost;
+                break;
+              default:
+                break;
             }
           }
           if (packetType == PKT_TYPE_CONFIG_ALL) {
@@ -761,6 +826,7 @@ const NETWORK_WIFI_MODE_STA = 1;
           }
         };
         ws.onclose = function(e) {
+          commstate = 0;
           console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
           setTimeout(function() {
             connectWS();

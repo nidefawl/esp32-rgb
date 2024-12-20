@@ -112,85 +112,96 @@ static void display_buffer_position_reset() {
   displayState.numHeartbeats = 0;
 }
 
-static bool display_config_validate(display_config_t* config) {
+static bool display_config_validate(display_config_t* config, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
   if (config->version < DISPLAY_CONFIG_VERSION) {
-    ESP_LOGE(TAG, "Invalid version");
+    strcpy(errMsg, "Invalid version");
     return false;
   }
   if (config->magic != DISPLAY_CONFIG_MAGIC) {
-    ESP_LOGE(TAG, "Invalid magic");
+    strcpy(errMsg, "Invalid magic");
     return false;
   }
   if (config->dimensionsWidth < 1 || config->dimensionsHeight < 1
       || config->dimensionsWidth > CONFIG_MAX_STRIPS || config->dimensionsHeight > CONFIG_MAX_LEDS) {
-    ESP_LOGE(TAG, "Invalid display dimensions");
+    strcpy(errMsg, "Invalid display dimensions");
     return false;
   }
   if (config->frameRate < 1) {
-    ESP_LOGE(TAG, "Invalid frame rate");
+    strcpy(errMsg, "Invalid frame rate");
     return false;
   }
+  strcpy(errMsg, "");
   return true;
 }
 
-static bool display_strip_config_validate(display_led_strip_config_all_t* config) {
+static bool display_strip_config_validate(display_led_strip_config_all_t* config, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
   if (config->version < DISPLAY_CONFIG_VERSION) {
-    ESP_LOGE(TAG, "Invalid version");
+    strcpy(errMsg, "Invalid version");
     return false;
   }
   if (config->magic != DISPLAY_CONFIG_MAGIC) {
-    ESP_LOGE(TAG, "Invalid magic");
+    strcpy(errMsg, "Invalid magic");
     return false;
   }
   for (int i = 0; i < CONFIG_MAX_STRIPS; i++) {
     if (config->configs[i].gpio < -1) {
-      ESP_LOGE(TAG, "Invalid GPIO for strip %d", i);
+      strcpy(errMsg, "Invalid GPIO for strip ");
+      char* buf = errMsg + strlen(errMsg);
+      itoa(i, buf, 10);
       return false;
     }
     if (config->configs[i].ledType > LED_TYPE_SK6812) {
-      ESP_LOGE(TAG, "Invalid LED type for strip %d", i);
+      strcpy(errMsg, "Invalid LED type for strip %d ");
+      char* buf = errMsg + strlen(errMsg);
+      itoa(i, buf, 10);
       return false;
     }
     if (config->configs[i].dataTypeId > RGB_DATA_TYPE_RGBW) {
-      ESP_LOGE(TAG, "Invalid data type for strip %d", i);
+      strcpy(errMsg, "Invalid data type for strip %d ");
+      char* buf = errMsg + strlen(errMsg);
+      itoa(i, buf, 10);
       return false;
     }
     if (config->configs[i].ledCount < 1) {
-      ESP_LOGE(TAG, "Invalid LED count for strip %d", i);
+      strcpy(errMsg, "Invalid LED count for strip %d ");
+      char* buf = errMsg + strlen(errMsg);
+      itoa(i, buf, 10);
       return false;
     }
   }
+  strcpy(errMsg, "");
   return true;
 }
 
-static bool display_network_config_validate(display_network_config_t* config) {
+static bool display_network_config_validate(display_network_config_t* config, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
   if (config->version < DISPLAY_CONFIG_VERSION) {
-    ESP_LOGE(TAG, "Invalid version");
+    strcpy(errMsg, "Invalid version");
     return false;
   }
   if (config->magic != DISPLAY_CONFIG_MAGIC) {
-    ESP_LOGE(TAG, "Invalid magic");
+    strcpy(errMsg, "Invalid magic");
     return false;
   }
   // check for empty hostname
   if (strnlen(config->hostname, sizeof(config->hostname)) < 1) {
-    ESP_LOGE(TAG, "Invalid hostname");
+    strcpy(errMsg, "Invalid hostname");
     return false;
   }
   if (config->wifiMode >= NUM_NETWORK_WIFI_MODES) {
-    ESP_LOGE(TAG, "Invalid wifi mode");
+    strcpy(errMsg, "Invalid wifi mode");
     return false;
   }
   enum WifiMode wifiMode = (enum WifiMode)config->wifiMode;
   // check for empty SSID
   if (wifiMode == NETWORK_WIFI_MODE_AP && strnlen(config->apWifiSsid, sizeof(config->apWifiSsid)) < 1) {
-    ESP_LOGE(TAG, "Invalid AP SSID");
+    strcpy(errMsg, "Invalid AP SSID");
     return false;
   }
   if (wifiMode == NETWORK_WIFI_MODE_STA && strnlen(config->staWifiSsid, sizeof(config->staWifiSsid)) < 1) {
-    ESP_LOGE(TAG, "Invalid STA SSID");
+    strcpy(errMsg, "Invalid STA SSID");
     return false;
   }
+  strcpy(errMsg, "");
   return true;
 }
 
@@ -344,15 +355,19 @@ static esp_err_t read_nvs_struct(const char* key, void* data, size_t len) {
     return err;
 }
 
-void write_strip_config(display_led_strip_config_all_t* config) {
-  if (display_strip_config_validate(config)) {
+bool write_strip_config(display_led_strip_config_all_t* config, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
+  char errMsgSetStripConfig[CONFIG_ERR_MSG_BUF_SIZE];
+  if (display_strip_config_validate(config, errMsgSetStripConfig)) {
     xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
     display_strip_config_set(config, true);
     write_nvs_struct("strip_config", config, sizeof(display_led_strip_config_all_t));
     xSemaphoreGive(semaphoreDisplay);
-    ESP_LOGI(TAG, "Set LED strip config all");
+    strncpy(errMsg, "Set LED strip config", CONFIG_ERR_MSG_BUF_SIZE);
+    return true;
   } else {
     ESP_LOGE(TAG, "Invalid LED strip config all");
+    strncpy(errMsg, errMsgSetStripConfig, CONFIG_ERR_MSG_BUF_SIZE);
+    return false;
   }
 }
 
@@ -418,10 +433,11 @@ static void display_load_config_from_flash() {
   xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
   esp_err_t err;
   display_config_t config;
+  char errMsg[CONFIG_ERR_MSG_BUF_SIZE];
   if ((err = read_nvs_struct("display_config", &config, sizeof(display_config_t))) != ESP_OK 
-      || !display_config_validate(&config)) {
+      || !display_config_validate(&config, errMsg)) {
+    ESP_LOGW(TAG, "Invalid display config, resetting: %s", errMsg);
     display_config_reset(&config);
-    ESP_LOGW(TAG, "Invalid config in flash, resetting");
     esp_err_t err = write_nvs_struct("display_config", &config, sizeof(display_config_t));
     if (err != ESP_OK) {
       ESP_LOGE(TAG, "Error writing config to flash");
@@ -433,8 +449,8 @@ static void display_load_config_from_flash() {
   }
   display_network_config_t networkConfig;
   if ((err = read_nvs_struct("network_config", &networkConfig, sizeof(display_network_config_t))) != ESP_OK
-      || !display_network_config_validate(&networkConfig)) {
-    ESP_LOGW(TAG, "Invalid network config in flash, resetting");
+      || !display_network_config_validate(&networkConfig, errMsg)) {
+    ESP_LOGW(TAG, "Invalid network config, resetting: %s", errMsg);
     display_network_config_reset(&networkConfig);
     esp_err_t err = write_nvs_struct("network_config", &networkConfig, sizeof(display_network_config_t));
     if (err != ESP_OK) {
@@ -448,10 +464,10 @@ static void display_load_config_from_flash() {
   displayNetworkConfig = networkConfig;
   display_led_strip_config_all_t ledStripConfigAll;
   if ((err = read_nvs_struct("strip_config", &ledStripConfigAll, sizeof(display_led_strip_config_all_t))) != ESP_OK 
-    || !display_strip_config_validate(&ledStripConfigAll)) {
+    || !display_strip_config_validate(&ledStripConfigAll, errMsg)) {
     display_strip_config_reset(&ledStripConfigAll);
-    ESP_LOGW(TAG, "Invalid LED strip config in flash, resetting");
-    write_strip_config(&ledStripConfigAll);
+    ESP_LOGW(TAG, "Invalid LED strip config, resetting: %s", errMsg);
+    write_strip_config(&ledStripConfigAll, errMsg);
   } else {
     display_strip_config_set(&ledStripConfigAll, false);
     ESP_LOGI(TAG, "Loaded LED strip config from flash");
@@ -781,10 +797,12 @@ static void led_display_task() {
   }
 }
 
-void handle_config_single_packet(struct packet_config_single_t* pkt) {
+bool write_config_single_packet(struct packet_config_single_t* pkt, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
   if (pkt->message.cfgId >= CFG_NUM_CONFIGS) {
-    ESP_LOGI(TAG, "Invalid config ID %lu", pkt->message.cfgId);
-    return;
+    strcpy(errMsg, "Invalid config ID ");
+    char* buf = errMsg + strlen(errMsg);
+    itoa(pkt->message.cfgId, buf, 10);
+    return false;
   }
   enum RGBConfigType cfgId = pkt->message.cfgId;
   xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
@@ -815,17 +833,22 @@ void handle_config_single_packet(struct packet_config_single_t* pkt) {
     default:
       break;
   }
-  if (display_config_validate(&config)) {
+  if (display_config_validate(&config, errMsg)) {
     display_config_set(&config, false);
+    strncpy(errMsg, "Set display config", CONFIG_ERR_MSG_BUF_SIZE);
+    return true;
   }
+  return false;
 }
 
-void handle_config_all_packet(display_config_t* config) {
-  if (display_config_validate(config)) {
+bool write_config_all_packet(display_config_t* config, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
+  if (display_config_validate(config, errMsg)) {
     display_config_set(config, true);
-    ESP_LOGI(TAG, "Set config all");
+    strncpy(errMsg, "Set display config", CONFIG_ERR_MSG_BUF_SIZE);
+    return true;
   } else {
     ESP_LOGE(TAG, "Invalid config all");
+    return false;
   }
 }
 
@@ -842,14 +865,31 @@ struct packet_strip_config_all_t read_strip_config() {
   }
   return readStripConfig;
 }
-
-void write_display_config(display_network_config_t* config) {
-  if (display_network_config_validate(config)) {
+struct packet_config_response_t make_packet_config_response(enum config_category_e cat) {
+  struct packet_config_response_t response = {
+    .header = {
+      .packetType = PKT_TYPE_CONFIG_RESPONSE,
+      .len        = sizeof(struct config_response_message_t),
+    },
+    .message = {
+      .cfgEnum = cat,
+      .status = 0,
+      .errorMsg = "",
+    },
+  };
+  return response;
+}
+bool write_display_config(display_network_config_t* config, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
+  char errMsgSetConfig[CONFIG_ERR_MSG_BUF_SIZE];
+  if (display_network_config_validate(config, errMsgSetConfig)) {
     displayNetworkConfig = *config;
     write_nvs_struct("network_config", config, sizeof(display_network_config_t));
-    ESP_LOGI(TAG, "Set network config");
+    strncpy(errMsg, "Set network config", CONFIG_ERR_MSG_BUF_SIZE);
+    return true;
   } else {
     ESP_LOGE(TAG, "Invalid network config");
+    strncpy(errMsg, errMsgSetConfig, CONFIG_ERR_MSG_BUF_SIZE);
+    return false;
   }
 }
 struct packet_network_config_t read_network_config() {
@@ -922,7 +962,10 @@ void display_handle_packet(uint8_t* rx_buffer, int len, int sock,
     send_udp_packet(sock, source_addr, &readConfig, sizeof(readConfig));
   } else if (hdr->packetType == PKT_TYPE_WRITE_NETWORK_CONFIG) {
     struct packet_network_config_t* pkt = (struct packet_network_config_t*) rx_buffer;
-    write_display_config(&pkt->message);
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_NETWORK);
+    bool bOk = write_display_config(&pkt->message, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_udp_packet(sock, source_addr, &response, sizeof(response));
   } else if (hdr->packetType == PKT_TYPE_READ_CONFIG) {
     struct packet_config_all_t readConfig = read_display_config();
     send_udp_packet(sock, source_addr, &readConfig, sizeof(readConfig));
@@ -931,13 +974,22 @@ void display_handle_packet(uint8_t* rx_buffer, int len, int sock,
     send_udp_packet(sock, source_addr, &readStripConfig, sizeof(readStripConfig));
   } else if (hdr->packetType == PKT_TYPE_WRITE_STRIP_CONFIG_ALL) {
     struct packet_strip_config_all_t* pkt = (struct packet_strip_config_all_t*) rx_buffer;
-    write_strip_config(&pkt->message);
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_STRIPS);
+    bool bOk = write_strip_config(&pkt->message, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_udp_packet(sock, source_addr, &response, sizeof(response));
   } else if (hdr->packetType == PKT_TYPE_CONFIG_ALL) {
     struct packet_config_all_t* pkt = (struct packet_config_all_t*) rx_buffer;
-    handle_config_all_packet(&pkt->message);
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_DISPLAY);
+    bool bOk = write_config_all_packet(&pkt->message, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_udp_packet(sock, source_addr, &response, sizeof(response));
   } else if (hdr->packetType == PKT_TYPE_CONFIG_SINGLE) {
     struct packet_config_single_t* pkt = (struct packet_config_single_t*) rx_buffer;
-    handle_config_single_packet(pkt);
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_DISPLAY);
+    bool bOk = write_config_single_packet(pkt, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_udp_packet(sock, source_addr, &response, sizeof(response));
   } else if (hdr->packetType == PKT_TYPE_LED_FRAME) {
       struct packet_led_frame_t* pkt = (struct packet_led_frame_t*) rx_buffer;
       if (pkt->message.frameOffset + pkt->message.frameSize >
@@ -982,8 +1034,11 @@ bool display_handle_websocket_packet(httpd_req_t *req, httpd_ws_frame_t* ws_pkt)
     return true;
   } else if (hdr->packetType == PKT_TYPE_WRITE_NETWORK_CONFIG) {
     struct packet_network_config_t* pkt = (struct packet_network_config_t*) ws_pkt->payload;
-    write_display_config(&pkt->message);
-    return false;
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_NETWORK);
+    bool bOk = write_display_config(&pkt->message, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_websocket_packet(req, ws_pkt, &response, sizeof(response));
+    return true;
   } else if (hdr->packetType == PKT_TYPE_READ_CONFIG) {
     struct packet_config_all_t readConfig = read_display_config();
     send_websocket_packet(req, ws_pkt, &readConfig, sizeof(readConfig));
@@ -994,16 +1049,25 @@ bool display_handle_websocket_packet(httpd_req_t *req, httpd_ws_frame_t* ws_pkt)
     return true;
   } else if (hdr->packetType == PKT_TYPE_WRITE_STRIP_CONFIG_ALL) {
     struct packet_strip_config_all_t* pkt = (struct packet_strip_config_all_t*) ws_pkt->payload;
-    write_strip_config(&pkt->message);
-    return false;
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_STRIPS);
+    bool bOk = write_strip_config(&pkt->message, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_websocket_packet(req, ws_pkt, &response, sizeof(response));
+    return true;
   } else if (hdr->packetType == PKT_TYPE_CONFIG_ALL) {
     struct packet_config_all_t* pkt = (struct packet_config_all_t*) ws_pkt->payload;
-    handle_config_all_packet(&pkt->message);
-    return false;
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_DISPLAY);
+    bool bOk = write_config_all_packet(&pkt->message, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_websocket_packet(req, ws_pkt, &response, sizeof(response));
+    return true;
   } else if (hdr->packetType == PKT_TYPE_CONFIG_SINGLE) {
     struct packet_config_single_t* pkt = (struct packet_config_single_t*) ws_pkt->payload;
-    handle_config_single_packet(pkt);
-    return false;
+    struct packet_config_response_t response = make_packet_config_response(CONFIG_CATEGORY_DISPLAY);
+    bool bOk = write_config_single_packet(pkt, response.message.errorMsg);
+    response.message.status = !bOk;
+    send_websocket_packet(req, ws_pkt, &response, sizeof(response));
+    return true;
   }
   return false;
 }

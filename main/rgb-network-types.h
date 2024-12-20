@@ -2,6 +2,7 @@
 #include <stdint.h>
 #define DISPLAY_CONFIG_MAGIC 0x12345678
 #define CONFIG_MAX_STRIPS 10
+#define CONFIG_ERR_MSG_BUF_SIZE 100-4
 
 enum RGBNetworkPacketType : uint8_t {
   PKT_TYPE_HEARTBEAT              = 0,
@@ -16,6 +17,7 @@ enum RGBNetworkPacketType : uint8_t {
   PKT_TYPE_READ_NETWORK_CONFIG    = 9,
   PKT_TYPE_WRITE_NETWORK_CONFIG   = 10,
   PKT_TYPE_ANNOUNCE_BROADCAST     = 11,
+  PKT_TYPE_CONFIG_RESPONSE        = 12,
   PKT_NUM_TYPES,
 };
 
@@ -129,6 +131,18 @@ struct request_heartbeat_message_t {
   uint8_t flags;  // bitmask of flags
 };
 
+enum config_category_e : uint32_t {
+  CONFIG_CATEGORY_DISPLAY = 0,
+  CONFIG_CATEGORY_NETWORK = 1,
+  CONFIG_CATEGORY_STRIPS = 2,
+  CONFIG_CATEGORY_NUM,
+};
+struct config_response_message_t {
+  uint32_t cfgEnum;
+  int32_t status; // 0: success, 1: error
+  char errorMsg[CONFIG_ERR_MSG_BUF_SIZE];
+};
+
 struct packet_heartbeat_t {
   struct packet_hdr_t header;
   struct heartbeat_message_t message;
@@ -170,6 +184,10 @@ struct packet_network_config_t {
 struct packet_broadcast_t {
   struct packet_hdr_t header;
   int message;
+};
+struct packet_config_response_t {
+  struct packet_hdr_t header;
+  struct config_response_message_t message;
 };
 
 #pragma pack(pop)
