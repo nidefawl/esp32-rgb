@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 RGB - Main Controller</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Display:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script> -->
+    <script type="text/javascript">
+
+// define packet types and enum constants
+const PKT_TYPE_HEARTBEAT = 0;
+const PKT_TYPE_CONFIG_ALL = 1;
+const PKT_TYPE_CONFIG_SINGLE = 2;
+const PKT_TYPE_LED_FRAME = 3;
+const PKT_TYPE_RUNTIME_STATS = 4;
+const PKT_TYPE_REQUEST_HEARTBEAT = 5;
+const PKT_TYPE_READ_CONFIG = 6;
+const PKT_TYPE_READ_STRIP_CONFIG_ALL = 7;
+const PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8;
+const PKT_TYPE_READ_NETWORK_CONFIG = 9;
+const PKT_TYPE_WRITE_NETWORK_CONFIG = 10;
+const PKT_NUM_TYPES = 11;
+
+const CFG_ID_DIMENSIONS_WIDTH = 0;
+const CFG_ID_DIMENSIONS_HEIGHT = 1;
+const CFG_ID_MAX_BRIGHTNESS = 2;
+const CFG_ID_FRAME_RATE = 3;
+const CFG_ID_STRIPS_ENABLE = 4;
+const CFG_ID_ENABLE_DEBUG = 5;
+const CFG_ID_HEARTBEAT_INTERVAL_FRAMES = 6;
+const CFG_NUM_CONFIGS = 7;
+const CFG_ID_TEMPO = 100;
+const CFG_ID_SCALE = 200;
+
+const RGB_DATA_TYPE_RGB = 0;
+const RGB_DATA_TYPE_RGBW = 1;
+
+const LED_TYPE_WS2812B = 0;
+const LED_TYPE_SK6812 = 1;
+
+    </script>
+    <script type="text/javascript">
+      let wsAddr = "ws://" + document.location.hostname + ":8001";
+      let ws = new WebSocket(wsAddr);
+
+      function pageNavigate(page) {
+        let activePage = document.querySelector(".tabcontent-visible");
+        let activeButton = document.querySelector(".selected_page");
+        let newPage = document.getElementById("page_" + page);
+        let newButton = document.getElementById("button_page_" + page);
+        activeButton?.classList.remove("selected_page");
+        activePage?.classList.remove("tabcontent-visible");
+        // show new page
+        newPage?.classList.add("tabcontent-visible");
+        newButton?.classList.add("selected_page");
+      }
+
+      function updateSliderBubble(slider) {
+        let value = slider.value;
+        // get first <label> element before slider
+        let sliderParentDiv = slider.parentElement?.parentElement?.parentElement;
+        let sliderBubble = sliderParentDiv?.querySelector(".sliderbubble");
+        if (sliderBubble) {
+          sliderBubble.innerHTML = value;
+        }
+      }
+      function parseClampValue(value, cfgId) {
+        value = parseFloat(value);
+        value = parseInt(value, 10);
+        switch (cfgId) {
+          case CFG_ID_MAX_BRIGHTNESS:
+            if (value < 0) {
+              return 0;
+            } else if (value > 255) {
+              return 255;
+            }
+            break;
+          case CFG_ID_FRAME_RATE:
+            if (value < 0) {
+              return 0;
+            } else if (value > 255) {
+              return 255;
+            }
+            break;
+          case CFG_ID_HEARTBEAT_INTERVAL_FRAMES:
+            if (value < 0) {
+              return 0;
+            } else if (value > 255) {
+              return 255;
+            }
+            break;
+          default:
+            break;
+        }
+        return value;
+      }
+      mapCache = {};
+      function sendNewValueToESP32(cfgId, value) {
+        if (ws && ws.readyState == WebSocket.OPEN) {
+          if (cfgId in mapCache) {
+            if (mapCache[cfgId] == value) {
+              return;
+            }
+          }
+          mapCache[cfgId] = value;
+          ws.send(JSON.stringify({
+            type: PKT_TYPE_CONFIG_SINGLE,
+            len: 2+2+4+4,
+            cfgId: cfgId,
+            value: value
+          }));
+        }
+      }
+
+      function updateBrightness(slider) {
+        updateSliderBubble(slider);
+        if (ws && ws.readyState == WebSocket.OPEN) {
+          sendNewValueToESP32(CFG_ID_MAX_BRIGHTNESS, parseClampValue(slider.value, CFG_ID_MAX_BRIGHTNESS));
+        }
+      }
+
+      function updateFramerate(slider) {
+        updateSliderBubble(slider);
+        if (ws && ws.readyState == WebSocket.OPEN) {
+          sendNewValueToESP32(CFG_ID_FRAME_RATE, parseClampValue(slider.value, CFG_ID_FRAME_RATE));
+        }
+      }
+
+      function updateScale(slider) {
+        updateSliderBubble(slider);
+        if (ws && ws.readyState == WebSocket.OPEN) {
+          sendNewValueToESP32(CFG_ID_SCALE, slider.value);
+        }
+      }
+
+      function updateTempo(slider) {
+        updateSliderBubble(slider);
+        if (ws && ws.readyState == WebSocket.OPEN) {
+          sendNewValueToESP32(CFG_ID_TEMPO, slider.value);
+        }
+      }
+
+      function sliderChanged(slider) {
+        updateSliderBubble(slider);
+      }
+
+      function sliderInput(slider) {
+        let value = slider.value;
+        updateSliderBubble(slider);
+      }
+
+      ws.onopen = function() {
+        console.log("Connected to " + wsAddr);
+        let pkt = JSON.stringify({
+          type: PKT_TYPE_CONFIG_ALL
+        });
+        ws.send(pkt);
+      };
+      ws.onmessage = function(event) {
+        console.log("Received: " + event.data);
+        obj = JSON.parse(event.data);
+        if ("type" in obj) {
+          switch (obj.type) {
+            case PKT_TYPE_CONFIG_SINGLE:
+              if ("cfgId" in obj && "value" in obj) {
+                switch (obj.cfgId) {
+                  case CFG_ID_MAX_BRIGHTNESS:
+                    let sliderBri = document.getElementById("sliderBri");
+                    if (sliderBri) {
+                      sliderBri.value = obj.value;
+                      sliderChanged(sliderBri);
+                    }
+                    break;
+                  case CFG_ID_FRAME_RATE:
+                    let sliderTempo = document.getElementById("sliderTempo");
+                    if (sliderTempo) {
+                      sliderTempo.value = obj.value;
+                      sliderChanged(sliderTempo);
+                    }
+                    break;
+                  case CFG_ID_HEARTBEAT_INTERVAL_FRAMES:
+                    break;
+                  default:
+                    break;
+                }
+              }
+              break;
+            case PKT_TYPE_CONFIG_ALL:
+              if ("lamps" in obj) {
+                let lamp_config = obj.lamps[0]?.config;
+                if ("max_brightness" in lamp_config) {
+                  let sliderBri = document.getElementById("sliderBri");
+                  if (sliderBri) {
+                    sliderBri.value = lamp_config.max_brightness;
+                    sliderChanged(sliderBri);
+                  }
+                }
+                if ("scale" in lamp_config) {
+                  let sliderScale = document.getElementById("sliderScale");
+                  if (sliderScale) {
+                    sliderScale.value = lamp_config.scale;
+                    sliderChanged(sliderScale);
+                  }
+                }
+                if ("tempo" in lamp_config) {
+                  let sliderTempo = document.getElementById("sliderTempo");
+                  if (sliderTempo) {
+                    sliderTempo.value = lamp_config.tempo;
+                    sliderChanged(sliderTempo);
+                  }
+                }
+                if ("frame_rate" in lamp_config) {
+                  let sliderFPS = document.getElementById("sliderFPS");
+                  if (sliderFPS) {
+                    sliderFPS.value = lamp_config.frame_rate;
+                    sliderChanged(sliderFPS);
+                  }
+                }
+                break;
+              }
+              break;
+            default:
+              break;
+          }
+        }
+      };
+      ws.onclose = function() {
+        console.log("Disconnected from " + wsAddr);
+      };
+      ws.onerror = function(event) {
+        console.log("Error: " + event);
+      };
+
+
+      
+    </script>
+</head>
+
+<body>
+    
+    <div class="container_menu">
+      <div class="tab">
+        <button id="button_page_status" onclick="pageNavigate('status')">Status</button>
+      </div>
+    </div>
+
+    <div class ="container_page">
+      <div class="page_content" id="page_status">
+        <!-- <div id="picker" class="noslide"></div> -->
+        <br>
+        <br>
+        <div class="container_brightness">
+          <label for="sliderFPS">Framerate</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
+          <div class="slider">
+            <div class="sliderwrap">
+              <input id="sliderFPS" onchange="updateFramerate(this)" max="255" min="0" type="range" value="128">
+              <div class="sliderdisplay"></div>
+            </div>
+          </div>
+        </div>
+        <br>
+        <br>
+        <div class="container_brightness">
+          <label for="sliderBri">Brightness</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
+          <div class="slider">
+            <div class="sliderwrap">
+              <input id="sliderBri" onchange="updateBrightness(this)" max="255" min="0" type="range" value="128">
+              <div class="sliderdisplay"></div>
+            </div>
+          </div>
+        </div>
+        <br>
+        <br>
+        <div class="container_scale">
+          <label for="sliderScale">Scale</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
+          <div class="slider">
+            <div class="sliderwrap">
+              <input id="sliderScale" onchange="updateScale(this)" step="0.1" max="10.0" min="0.1" type="range" value="1.0">
+              <div class="sliderdisplay"></div>
+            </div>
+          </div>
+        </div>
+        <br>
+        <br>
+        <div class="container_tempo">
+          <label for="sliderTempo">Tempo</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
+          <div class="slider">
+            <div class="sliderwrap">
+              <input id="sliderTempo" onchange="updateTempo(this)" step="0.01" max="5.0" min="0.01" type="range" value="0.5">
+              <div class="sliderdisplay"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      /*let colorpicker_width = 420;
+      // figure out container pyhsical width of parent of #picker
+      var container = document.getElementById("picker").parentElement;
+      if (container && container.offsetWidth * 0.60 > colorpicker_width) {
+        colorpicker_width = container.offsetWidth * 0.60;
+      }
+      // actually get inner height of window
+      let window_height = window.innerHeight;
+      if (colorpicker_width > window_height*0.6) {
+        colorpicker_width = window_height*0.6;
+      }
+      let cpick = new iro.ColorPicker("#picker", {
+        width: colorpicker_width,
+        wheelLightness: false,
+        wheelAngle: 270,
+        wheelDirection: "clockwise",
+        layout: [{
+          component: iro.ui.Wheel,
+          options: {}
+        }]
+      });*/
+      pageNavigate("status");
+      // get '#sliderwrap > input' and call sliderChanged on it
+      let sliderScale = document.querySelectorAll(".sliderwrap input");
+      if (sliderScale) {
+        sliderScale.forEach((slider) => {
+          sliderChanged(slider);
+        });
+      }
+    </script>
+</body>
+
+</html>
