@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32 RGB - inserthostname</title>
+    <title>ESP32 RGB</title>
     <!-- <link rel="preconnect" href="https://fonts.googleapis.com"> -->
     <!-- <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> -->
     <!-- <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Display:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet"> -->
@@ -676,6 +676,8 @@ const NETWORK_WIFI_MODE_STA = 1;
             "staWifiSsid": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64, 32)),
             "staWifiPassword": new TextDecoder().decode(new Uint8Array(arrayBuffer, 4 + 16 + 64 + 32 + 64 + 32, 64))
           };
+          let pageTitle = "ESP32 RGB - " + networkConfig["hostname"];
+          document.title = pageTitle;
           // fix zero termination from c-strings
           for (let key in networkConfig) {
             if (typeof networkConfig[key] == "string") {
