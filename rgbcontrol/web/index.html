@@ -24,7 +24,9 @@ const PKT_TYPE_READ_STRIP_CONFIG_ALL = 7;
 const PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8;
 const PKT_TYPE_READ_NETWORK_CONFIG = 9;
 const PKT_TYPE_WRITE_NETWORK_CONFIG = 10;
-const PKT_NUM_TYPES = 11;
+const PKT_TYPE_ANNOUNCE_BROADCAST = 11;
+const PKT_TYPE_JSON_CLIENT_LIST = 100;
+const PKT_NUM_TYPES = 13;
 
 const CFG_ID_DIMENSIONS_WIDTH = 0;
 const CFG_ID_DIMENSIONS_HEIGHT = 1;
@@ -160,6 +162,10 @@ const LED_TYPE_SK6812 = 1;
           type: PKT_TYPE_CONFIG_ALL
         });
         ws.send(pkt);
+        let pkt2 = JSON.stringify({
+          type: PKT_TYPE_JSON_CLIENT_LIST
+        });
+        ws.send(pkt2);
       };
       ws.onmessage = function(event) {
         console.log("Received: " + event.data);
@@ -187,6 +193,26 @@ const LED_TYPE_SK6812 = 1;
                     break;
                   default:
                     break;
+                }
+              }
+              break;
+            case PKT_TYPE_JSON_CLIENT_LIST:
+              if ("clients" in obj) {
+                let table = document.querySelector("#lamp_table");
+                if (table) {
+                  obj.clients.forEach((client) => {
+                    let row = table.insertRow(-1);
+                    let cell = row.insertCell(-1);
+                    cell.innerHTML = client.hostname;
+                    cell = row.insertCell(-1);
+                    cell.innerHTML = client.ip;
+                    cell = row.insertCell(-1);
+                    cell.innerHTML = client.config.dimensions[0] + "x" + client.config.dimensions[1];
+                    cell = row.insertCell(-1);
+                    cell.innerHTML = client.config.max_brightness;
+                    cell = row.insertCell(-1);
+                    cell.innerHTML = client.config.frame_rate;
+                  });
                 }
               }
               break;
@@ -296,6 +322,22 @@ const LED_TYPE_SK6812 = 1;
             </div>
           </div>
         </div>
+        <br/>
+        <br/>
+        <br/>
+        Active Lamps
+        <br/>
+        <br/>
+        <div style="display: flex; justify-content: center;"> <!-- Table for entries above-->
+          <table style="width: 80%;" id="lamp_table">
+            <tr>
+              <th>Hostname</th>
+              <th>IP</th>
+              <th>Dimensions</th>
+              <th>Brightness</th>
+              <th>Framerate</th>
+            </tr>
+          </table>
       </div>
     </div>
     <script>

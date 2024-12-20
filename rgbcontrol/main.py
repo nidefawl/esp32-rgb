@@ -10,6 +10,7 @@ import time
 import struct
 import random
 import math
+import traceback
 import websockets
 import asyncio
 
@@ -35,6 +36,7 @@ PKT_TYPE_WRITE_STRIP_CONFIG_ALL = 8
 PKT_TYPE_READ_NETWORK_CONFIG    = 9
 PKT_TYPE_WRITE_NETWORK_CONFIG   = 10
 PKT_TYPE_ANNOUNCE_BROADCAST     = 11
+PKT_TYPE_JSON_CLIENT_LIST       = 100
 
 # config types
 CFG_ID_DIMENSIONS_WIDTH = 0
@@ -916,10 +918,26 @@ async def websocket_handler(websocket):
           obj = json.loads(message)
           print("Received message", obj)
           if "type" in obj:
-              if PKT_TYPE_CONFIG_ALL == obj["type"]:
+              if PKT_TYPE_JSON_CLIENT_LIST == obj["type"]:
+                  response_obj = {"type": PKT_TYPE_JSON_CLIENT_LIST, "clients": []}
+                  for i, lamp in enumerate(g_server["lamps"]):
+                      lamp_config_json = json.dumps(lamp.config, cls=LampConfigEncoder)
+                      lamp_config_obj = json.loads(lamp_config_json)
+                      response_obj["clients"].append(
+                          {
+                              "hostname": lamp.name,
+                              "ip": lamp.ip,
+                              "config": lamp_config_obj,
+                              # "stats": lamp.stats,
+                          }
+                      )
+                  response_json_str = json.dumps(response_obj)
+                  print("Sending response", response_json_str)
+                  await websocket.send(response_json_str)
+              elif PKT_TYPE_CONFIG_ALL == obj["type"]:
                   response_obj = {"type": obj["type"], "lamps": []}
                   for i, lamp in enumerate(g_server["lamps"]):
-                      lamp_config_json = json.dumps(lamp.config, cls=LampConfigEncoder);
+                      lamp_config_json = json.dumps(lamp.config, cls=LampConfigEncoder)
                       lamp_config_obj = json.loads(lamp_config_json)
                       lamp_config_obj["scale"] = g_abs_scale
                       lamp_config_obj["speed"] = g_abs_speed
@@ -962,8 +980,9 @@ async def websocket_handler(websocket):
           print("Connection closed")
           break
         except:
-          print("Error reading websocket message")
-          print("Error:", sys.exc_info()[0])
+          print("Error reading websocket message:", sys.exc_info()[0])
+          # print stack trace
+          traceback.print_exc()
           continue
 
 async def websocket_serve():
@@ -976,6 +995,7 @@ def webserver_thread():
         # create http server serving index.html
         HTTP_DIRECTORY = os.path.join(os.path.dirname(__file__), 'web')
         os.chdir(HTTP_DIRECTORY)
+        socketserver.TCPServer.allow_reuse_address = True
         httpd_server = socketserver.TCPServer((HTTP_ADDR, HTTP_PORT), SimpleHTTPRequestHandler)
         httpd_server.serve_forever()
     except KeyboardInterrupt:
@@ -1040,7 +1060,7 @@ def main(args=None):
                 tmNow = time.time()
                 time.sleep(0.05)
                 # if keyboard.read_key() == "p":
-                #   switch_to_next_program();
+                #   switch_to_next_program()
                 # if keyboard.read_key() == "q":
                 #   break
 
