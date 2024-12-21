@@ -685,16 +685,16 @@ static void display_strips_update(void* arg)
   } else {
     if (displayState.numFrames > 0) {
       displayState.numBufferUnderrun++;
-      // if we haven't received a frame in 5 seconds, reset the master address so broadcasts are sent again
-      if (esp_timer_get_time() - g_timeLastFrame_us > 5e6) {
-        if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
-          g_timeLastFrame_us = esp_timer_get_time();
-          bool bHadMaster = g_udp_master_address.s2_len > 0;
-          memset(&g_udp_master_address, 0, sizeof(g_udp_master_address));
-          xSemaphoreGive(semaphoreNetworkMasterAddress);
-          if (bHadMaster) {
-            ESP_LOGI(TAG, "Resetting master address");
-          }
+    }
+    // if we haven't received a frame in 5 seconds, reset the master address so broadcasts are sent again
+    if (esp_timer_get_time() - g_timeLastFrame_us > 5e6) {
+      if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
+        g_timeLastFrame_us = esp_timer_get_time();
+        bool bHadMaster = g_udp_master_address.s2_len > 0;
+        memset(&g_udp_master_address, 0, sizeof(g_udp_master_address));
+        xSemaphoreGive(semaphoreNetworkMasterAddress);
+        if (bHadMaster) {
+          ESP_LOGI(TAG, "Resetting master address");
         }
       }
     }
