@@ -155,17 +155,28 @@ const LED_TYPE_SK6812 = 1;
         let value = slider.value;
         updateSliderBubble(slider);
       }
-
-      ws.onopen = function() {
-        console.log("Connected to " + wsAddr);
+      function loadClientList() {
         let pkt = JSON.stringify({
-          type: PKT_TYPE_CONFIG_ALL
-        });
-        ws.send(pkt);
-        let pkt2 = JSON.stringify({
           type: PKT_TYPE_JSON_CLIENT_LIST
         });
-        ws.send(pkt2);
+        let websock = ws;
+        if (websock && websock.readyState == WebSocket.OPEN) {
+          websock.send(pkt);
+        }
+      }
+      ws.onopen = function() {
+        console.log("Connected to " + wsAddr);
+        let websock = ws;
+        if (websock && websock.readyState == WebSocket.OPEN) {
+          let pkt = JSON.stringify({
+            type: PKT_TYPE_CONFIG_ALL
+          });
+          websock.send(pkt);
+          loadClientList();
+          tmInterval = setInterval(() => {
+            loadClientList();
+          }, 2000);
+        }
       };
       ws.onmessage = function(event) {
         console.log("Received: " + event.data);
@@ -200,12 +211,16 @@ const LED_TYPE_SK6812 = 1;
               if ("clients" in obj) {
                 let table = document.querySelector("#lamp_table");
                 if (table) {
+                  // remove all rows except header
+                  while (table.rows.length > 1) {
+                    table.deleteRow(1);
+                  }
                   obj.clients.forEach((client) => {
                     let row = table.insertRow(-1);
                     let cell = row.insertCell(-1);
                     cell.innerHTML = client.hostname;
                     cell = row.insertCell(-1);
-                    cell.innerHTML = client.ip;
+                    cell.innerHTML = "<a href=\"http://" + client.ip + "\" alt=\"Open http:\\" + client.ip+"\">" + client.ip + "</a>";
                     cell = row.insertCell(-1);
                     cell.innerHTML = client.config.dimensions[0] + "x" + client.config.dimensions[1];
                     cell = row.insertCell(-1);
@@ -256,6 +271,7 @@ const LED_TYPE_SK6812 = 1;
         }
       };
       ws.onclose = function() {
+        clearInterval(tmInterval);
         console.log("Disconnected from " + wsAddr);
       };
       ws.onerror = function(event) {

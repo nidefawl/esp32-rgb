@@ -274,9 +274,11 @@ class Lamp:
         self.port = port
         self.config = LampConfig.default()
         self.frames_sent = 0
+        self.frame_id_max = 0
         self.ip_pton = ip_pton
         self.program_state = {}
         self.stats = {}
+        self.tmLastPacket = time.time()
 
     def __str__(self):
         return (
@@ -299,13 +301,6 @@ class Lamp:
             flags |= 1
         if enable_runtime_stats:
             flags |= 2
-        print(
-            "Requesting heartbeat",
-            "enable_heartbeat",
-            enable_heartbeat,
-            "enable_runtime_stats",
-            enable_runtime_stats,
-        )
         pkt_request_heartbeat = bytearray(
             packet_hdr.pack(PKT_TYPE_REQUEST_HEARTBEAT, request_heartbeat_message.size)
         )
@@ -318,14 +313,12 @@ class Lamp:
             packet_hdr.pack(PKT_TYPE_CONFIG_ALL, config_message_all.size)
         )
         pkt_cfg_all += self.config.pack()
-        print("Sending config all", len(pkt_cfg_all))
         sock.sendto(pkt_cfg_all, (self.ip, self.port))
         return sock
     
     def update_config(self, sock, cfg_id, value):
         pkt_cfg_single = bytearray(packet_hdr.pack(PKT_TYPE_CONFIG_SINGLE, config_message.size))
         pkt_cfg_single += config_message.pack(cfg_id, value)
-        print("Sending config single", len(pkt_cfg_single))
         sock.sendto(pkt_cfg_single, (self.ip, self.port))
         return sock
 
@@ -334,13 +327,11 @@ class Lamp:
             packet_hdr.pack(PKT_TYPE_HEARTBEAT, heartbeat_message.size)
         )
         pkt_heartbeat += heartbeat_message.pack(0, 0)
-        print("Sending heartbeat", len(pkt_heartbeat))
         sock.sendto(pkt_heartbeat, (self.ip, self.port))
         return sock
 
     def load_config(self, sock):
         pkt_read_config = bytearray(packet_hdr.pack(PKT_TYPE_READ_CONFIG, 0))
-        print("Requesting config")
         sock.sendto(pkt_read_config, (self.ip, self.port))
         time_start = time.time()
         while True:
@@ -377,31 +368,6 @@ class Lamp:
                         max_brightness,
                         is_rgbw,
                     ) = config_message_all.unpack(data[4:])
-                    print(
-                        "Received config all",
-                        "version",
-                        version,
-                        "magic",
-                        magic,
-                        "rmt_clock_hz",
-                        rmt_clock_hz,
-                        "dimensions_width",
-                        dimensions_width,
-                        "dimensions_height",
-                        dimensions_height,
-                        "heartbeat_interval_frames",
-                        heartbeat_interval_frames,
-                        "strips_enable",
-                        strips_enable,
-                        "debug_flags",
-                        debug_flags,
-                        "frame_rate",
-                        frame_rate,
-                        "max_brightness",
-                        max_brightness,
-                        "is_rgbw",
-                        is_rgbw,
-                    )
                     self.config = LampConfig(
                         [dimensions_width, dimensions_height],
                         is_rgbw,
@@ -507,23 +473,19 @@ class Lamp:
         # send led frame packet
         sock.sendto(led_frame_packet, (self.ip, self.port))
         self.frames_sent += 1
+        self.frame_id_max = frame_id
 
     def get_frames_sent(self):
         return self.frames_sent
+  
+    def get_frame_id_max(self):
+        return self.frame_id_max
 
     def handle_packet(self, sock, data, pkt_type):
         global g_num_frames_all_lamps
+        self.tmLastPacket = time.time()
         if pkt_type == PKT_TYPE_HEARTBEAT:
             frame_id, buf_fill = heartbeat_message.unpack(data[4:])
-            if frame_id == 0:
-                print(
-                    "Received first heartbeat from",
-                    self.name,
-                    "frame_id",
-                    frame_id,
-                    "buf_fill",
-                    buf_fill,
-                )
             num_frames_to_generate = self.config.heartbeat_interval_frames
             if buf_fill < 32:
                 num_frames_to_generate += 1
@@ -602,6 +564,8 @@ class Lamp:
                 rmt_clock_hz,
             )
             print(self.config)
+    def get_time_last_packet(self):
+        return self.tmLastPacket
 
 
 def process_pixels_rainbow_circle(time_since, frame_id, state, dimensions):
@@ -614,8 +578,9 @@ def process_pixels_rainbow_circle(time_since, frame_id, state, dimensions):
     speed2 = 33 * g_abs_speed
     f = math.cos(time_since * speed2 * math.pi / 180) * 0.5 + 0.5
     f2 = math.cos(time_since * speed2 * 1.1 * math.pi / 180) * 0.5 + 0.5
-    f3 = math.cos(time_since * speed2 * 1.01 * math.pi / 180) * 0.5 + 0.5
-    f4 = math.cos(time_since * speed2 * 1.05 * math.pi / 180) * 0.5 + 0.5
+    palette_phase = time_since * 0.1
+    idx_palette = int(palette_phase) % len(palettes)
+    palette_phase = palette_phase % 1.0
     for strip in range(LED_NUM_STRIPS):
         for led in range(LED_STRIP_NUM_LEDS_PER_STRIP):
             y0to1 = 0.5 if LED_STRIP_NUM_LEDS_PER_STRIP == 1 else led / (LED_STRIP_NUM_LEDS_PER_STRIP - 1)
@@ -624,11 +589,6 @@ def process_pixels_rainbow_circle(time_since, frame_id, state, dimensions):
             dst = math.sqrt((x0to1 - 0.5) ** 2 + (y0to1 - 0.5) ** 2)
             hue = dst * 360 * (0.5 + g_abs_scale * f + 5.5 * f * f2)
             speed = 64.0 *g_abs_speed
-            palette_phase = time_since * 0.1
-            idx_palette = int(palette_phase) % len(palettes)
-            palette_phase = palette_phase % 1.0
-            # if idx_palette % 2 == 0:
-            #   speed = -speed
 
             hue -= time_since * speed
             hue = hue % 360
@@ -646,8 +606,7 @@ def process_pixels_rainbow_circle(time_since, frame_id, state, dimensions):
 
             # # calculate a proper white value from the RGB values
             luma = val[0] * 0.299 + val[1] * 0.587 + val[2] * 0.114
-            col_normalized = val + [luma * 2]  # add white channel
-            # col_normalized = val + [1] # add white channel
+            col_normalized = val + [luma]  # add white channel
 
             # clamp values
             for i in range(4):
@@ -821,7 +780,7 @@ def init_lamp(server, ip_pton, ip_str, port):
         print("Error: could not load config for IP", ip_str)
         return False
 
-    print("Lamp current configuration", lamp)
+    # print("Lamp current configuration", lamp)
 
     # update lamp config
     if args.fps is not None:
@@ -845,11 +804,11 @@ def init_lamp(server, ip_pton, ip_str, port):
     if args.image is not None:
         lamp.program_state["image"] = args.image
 
-    print("Lamp new configuration", lamp)
     lamp.send_config(sock)
     # remove all lamps with same ip from server["lamps"]
     newLamps = [l for l in server["lamps"] if ip_pton != l.ip_pton]
     newLamps.append(lamp)
+    print("Lamp connected", lamp.name, lamp.ip)
     server["lamps"] = newLamps
     lamp.request_heartbeat(sock, enable_heartbeat=True, enable_runtime_stats=False)
     return True
@@ -872,28 +831,17 @@ def recv_udp_packets(*args):
             return
         if len(data) > 0:
             pkt_type, _ = packet_hdr.unpack(data[:4])
-            # get ip as string and port
             ip = addr[0]
-            # get lamp by ip
-            lamp = None
             ip_pton = socket.inet_pton(sock.family, ip)
-            # print("Got packet from", ip, "type", pkt_type)
             if pkt_type == PKT_TYPE_ANNOUNCE_BROADCAST:
               init_lamp(server, ip_pton, ip, addr[1])
               continue
             else:
+              lamp = None
               for l in server["lamps"]:
-                  # if l.ip == ip:
                   if ip_pton == l.ip_pton:
                       lamp = l
                       break
-              # if lamp == None:
-              #   init_lamp(server, ip_pton, ip, addr[1])
-              # for l in server["lamps"]:
-              #     # if l.ip == ip:
-              #     if ip_pton == l.ip_pton:
-              #         lamp = l
-              #         break
               if lamp == None:
                 print("Error: received unexpected packet ", pkt_type, "from unknown lamp", ip)
                 continue
@@ -916,7 +864,6 @@ async def websocket_handler(websocket):
         try:
           message = await websocket.recv()
           obj = json.loads(message)
-          print("Received message", obj)
           if "type" in obj:
               if PKT_TYPE_JSON_CLIENT_LIST == obj["type"]:
                   response_obj = {"type": PKT_TYPE_JSON_CLIENT_LIST, "clients": []}
@@ -928,11 +875,9 @@ async def websocket_handler(websocket):
                               "hostname": lamp.name,
                               "ip": lamp.ip,
                               "config": lamp_config_obj,
-                              # "stats": lamp.stats,
                           }
                       )
                   response_json_str = json.dumps(response_obj)
-                  print("Sending response", response_json_str)
                   await websocket.send(response_json_str)
               elif PKT_TYPE_CONFIG_ALL == obj["type"]:
                   response_obj = {"type": obj["type"], "lamps": []}
@@ -1059,15 +1004,26 @@ def main(args=None):
             try:# Collect events until released
                 tmNow = time.time()
                 time.sleep(0.05)
-                # if keyboard.read_key() == "p":
-                #   switch_to_next_program()
-                # if keyboard.read_key() == "q":
-                #   break
+                
+
+                lamps_timed_out = []
+                for lamp in server["lamps"]:
+                    tmOut = 5.0
+                    if lamp.get_time_last_packet() < tmNow - tmOut:
+                        lamps_timed_out.append(lamp)
+                
+                if len(lamps_timed_out) > 0:
+                    for lamp in lamps_timed_out:
+                        lamp.request_heartbeat(sock, enable_heartbeat=False, enable_runtime_stats=False)
+                        server["lamps"].remove(lamp)
+                        print("Lamp timed out", lamp.name, lamp.ip)
 
                 if g_num_frames_all_lamps > 32 and tmNow - time_last_fps > 5.0:
                     current_fps = g_num_frames_all_lamps / (tmNow - time_last_fps)
                     avg_fps = 0.5 * avg_fps + 0.5 * current_fps
                     target_fps = 0 if len(server["lamps"]) == 0 else server["lamps"][0].config.frame_rate
+                    lamp_frame_indices = [lamp.get_frame_id_max() for lamp in server["lamps"]]
+                    lamp_frame_indices = ",".join([str(i) for i in lamp_frame_indices])
                     print(
                         "FPS:",
                         "Target",
@@ -1076,6 +1032,7 @@ def main(args=None):
                         current_fps,
                         "Avg",
                         avg_fps,
+                        lamp_frame_indices,
                     )
                     g_num_frames_all_lamps = 0
                     time_last_fps = tmNow
