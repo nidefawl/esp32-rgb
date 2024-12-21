@@ -47,8 +47,7 @@ const LED_TYPE_SK6812 = 1;
 
     </script>
     <script type="text/javascript">
-      let wsAddr = "ws://" + document.location.hostname + ":8001";
-      let ws = new WebSocket(wsAddr);
+      ws = null;
 
       function pageNavigate(page) {
         let activePage = document.querySelector(".tabcontent-visible");
@@ -164,119 +163,138 @@ const LED_TYPE_SK6812 = 1;
           websock.send(pkt);
         }
       }
-      ws.onopen = function() {
-        console.log("Connected to " + wsAddr);
-        let websock = ws;
-        if (websock && websock.readyState == WebSocket.OPEN) {
-          let pkt = JSON.stringify({
-            type: PKT_TYPE_CONFIG_ALL
-          });
-          websock.send(pkt);
-          loadClientList();
-          tmInterval = setInterval(() => {
+
+      function connectWS() {
+        let wsAddr = "ws://" + document.location.hostname + ":8001";
+        ws = new WebSocket(wsAddr);
+        ws.onopen = function() {
+          console.log("Connected to " + wsAddr);
+          let websock = ws;
+          if (websock && websock.readyState == WebSocket.OPEN) {
+            let pkt = JSON.stringify({
+              type: PKT_TYPE_CONFIG_ALL
+            });
+            websock.send(pkt);
             loadClientList();
-          }, 2000);
-        }
-      };
-      ws.onmessage = function(event) {
-        console.log("Received: " + event.data);
-        obj = JSON.parse(event.data);
-        if ("type" in obj) {
-          switch (obj.type) {
-            case PKT_TYPE_CONFIG_SINGLE:
-              if ("cfgId" in obj && "value" in obj) {
-                switch (obj.cfgId) {
-                  case CFG_ID_MAX_BRIGHTNESS:
-                    let sliderBri = document.getElementById("sliderBri");
-                    if (sliderBri) {
-                      sliderBri.value = obj.value;
-                      sliderChanged(sliderBri);
-                    }
-                    break;
-                  case CFG_ID_FRAME_RATE:
-                    let sliderTempo = document.getElementById("sliderTempo");
-                    if (sliderTempo) {
-                      sliderTempo.value = obj.value;
-                      sliderChanged(sliderTempo);
-                    }
-                    break;
-                  case CFG_ID_HEARTBEAT_INTERVAL_FRAMES:
-                    break;
-                  default:
-                    break;
-                }
-              }
-              break;
-            case PKT_TYPE_JSON_CLIENT_LIST:
-              if ("clients" in obj) {
-                let table = document.querySelector("#lamp_table");
-                if (table) {
-                  // remove all rows except header
-                  while (table.rows.length > 1) {
-                    table.deleteRow(1);
-                  }
-                  obj.clients.forEach((client) => {
-                    let row = table.insertRow(-1);
-                    let cell = row.insertCell(-1);
-                    cell.innerHTML = client.hostname;
-                    cell = row.insertCell(-1);
-                    cell.innerHTML = "<a href=\"http://" + client.ip + "\" alt=\"Open http:\\" + client.ip+"\">" + client.ip + "</a>";
-                    cell = row.insertCell(-1);
-                    cell.innerHTML = client.config.dimensions[0] + "x" + client.config.dimensions[1];
-                    cell = row.insertCell(-1);
-                    cell.innerHTML = client.config.max_brightness;
-                    cell = row.insertCell(-1);
-                    cell.innerHTML = client.config.frame_rate;
-                  });
-                }
-              }
-              break;
-            case PKT_TYPE_CONFIG_ALL:
-              if ("lamps" in obj) {
-                let lamp_config = obj.lamps[0]?.config;
-                if ("max_brightness" in lamp_config) {
-                  let sliderBri = document.getElementById("sliderBri");
-                  if (sliderBri) {
-                    sliderBri.value = lamp_config.max_brightness;
-                    sliderChanged(sliderBri);
-                  }
-                }
-                if ("scale" in lamp_config) {
-                  let sliderScale = document.getElementById("sliderScale");
-                  if (sliderScale) {
-                    sliderScale.value = lamp_config.scale;
-                    sliderChanged(sliderScale);
-                  }
-                }
-                if ("tempo" in lamp_config) {
-                  let sliderTempo = document.getElementById("sliderTempo");
-                  if (sliderTempo) {
-                    sliderTempo.value = lamp_config.tempo;
-                    sliderChanged(sliderTempo);
-                  }
-                }
-                if ("frame_rate" in lamp_config) {
-                  let sliderFPS = document.getElementById("sliderFPS");
-                  if (sliderFPS) {
-                    sliderFPS.value = lamp_config.frame_rate;
-                    sliderChanged(sliderFPS);
+            tmInterval = setInterval(() => {
+              loadClientList();
+            }, 2000);
+          }
+        };
+        ws.onmessage = function(event) {
+          obj = JSON.parse(event.data);
+          if ("type" in obj) {
+            switch (obj.type) {
+              case PKT_TYPE_CONFIG_SINGLE:
+                if ("cfgId" in obj && "value" in obj) {
+                  switch (obj.cfgId) {
+                    case CFG_ID_MAX_BRIGHTNESS:
+                      let sliderBri = document.getElementById("sliderBri");
+                      if (sliderBri) {
+                        sliderBri.value = obj.value;
+                        sliderChanged(sliderBri);
+                      }
+                      break;
+                    case CFG_ID_FRAME_RATE:
+                      let sliderTempo = document.getElementById("sliderTempo");
+                      if (sliderTempo) {
+                        sliderTempo.value = obj.value;
+                        sliderChanged(sliderTempo);
+                      }
+                      break;
+                    case CFG_ID_HEARTBEAT_INTERVAL_FRAMES:
+                      break;
+                    default:
+                      break;
                   }
                 }
                 break;
-              }
-              break;
-            default:
-              break;
+              case PKT_TYPE_JSON_CLIENT_LIST:
+                if ("clients" in obj) {
+                  let table = document.querySelector("#lamp_table");
+                  if (table) {
+                    // remove all rows except header
+                    while (table.rows.length > 1) {
+                      table.deleteRow(1);
+                    }
+                    obj.clients.forEach((client) => {
+                      let row = table.insertRow(-1);
+                      let config = client.config;
+                      row.insertCell(-1).innerHTML = client.hostname;
+                      row.insertCell(-1).innerHTML = "<a href=\"http://" + client.ip + "\" alt=\"Open http:\\" + client.ip+"\">" + client.ip + "</a>";
+                      row.insertCell(-1).innerHTML = config.dimensions[0] + "x" + config.dimensions[1];
+                      row.insertCell(-1).innerHTML = config.max_brightness;
+                      row.insertCell(-1).innerHTML = config.frame_rate;
+                      let stats = client.stats;
+                      if (!stats.fps_actual) {
+                        stats.fps_actual = 0;
+                      }
+                      if (!stats.fps_callbacks) {
+                        stats.fps_callbacks = 0;
+                      }
+                      row.insertCell(-1).innerHTML = stats.fps_actual.toFixed(2);
+                      row.insertCell(-1).innerHTML = stats.fps_callbacks.toFixed(2);
+                      row.insertCell(-1).innerHTML = stats.num_buffer_underrun;
+                      row.insertCell(-1).innerHTML = stats.num_callbacks;
+                      row.insertCell(-1).innerHTML = stats.num_frames;
+                      row.insertCell(-1).innerHTML = stats.num_heartbeats;
+                      row.insertCell(-1).innerHTML = stats.read_index;
+                      row.insertCell(-1).innerHTML = stats.write_index;
+                    });
+                  }
+                }
+                break;
+              case PKT_TYPE_CONFIG_ALL:
+                if ("lamps" in obj) {
+                  let lamp_config = obj.lamps[0]?.config;
+                  if ("max_brightness" in lamp_config) {
+                    let sliderBri = document.getElementById("sliderBri");
+                    if (sliderBri) {
+                      sliderBri.value = lamp_config.max_brightness;
+                      sliderChanged(sliderBri);
+                    }
+                  }
+                  if ("scale" in lamp_config) {
+                    let sliderScale = document.getElementById("sliderScale");
+                    if (sliderScale) {
+                      sliderScale.value = lamp_config.scale;
+                      sliderChanged(sliderScale);
+                    }
+                  }
+                  if ("tempo" in lamp_config) {
+                    let sliderTempo = document.getElementById("sliderTempo");
+                    if (sliderTempo) {
+                      sliderTempo.value = lamp_config.tempo;
+                      sliderChanged(sliderTempo);
+                    }
+                  }
+                  if ("frame_rate" in lamp_config) {
+                    let sliderFPS = document.getElementById("sliderFPS");
+                    if (sliderFPS) {
+                      sliderFPS.value = lamp_config.frame_rate;
+                      sliderChanged(sliderFPS);
+                    }
+                  }
+                  break;
+                }
+                break;
+              default:
+                break;
+            }
           }
-        }
-      };
-      ws.onclose = function() {
-        clearInterval(tmInterval);
-        console.log("Disconnected from " + wsAddr);
-      };
-      ws.onerror = function(event) {
-        console.log("Error: " + event);
-      };
+        };
+        ws.onclose = function(e) {
+          clearInterval(tmInterval);
+          console.log("Disconnected from " + wsAddr);
+          console.log('Reconnect will be attempted in 2 seconds.', e.reason);
+          setTimeout(function() {
+            connectWS();
+          }, 2000);
+        };
+        ws.onerror = function(event) {
+          console.log("Error: " + event);
+        };
+      }
 
 
       
@@ -344,7 +362,7 @@ const LED_TYPE_SK6812 = 1;
         Active Lamps
         <br/>
         <br/>
-        <div style="display: flex; justify-content: center;"> <!-- Table for entries above-->
+        <div style="display: flex; justify-content: center;">
           <table style="width: 80%;" id="lamp_table">
             <tr>
               <th>Hostname</th>
@@ -352,6 +370,14 @@ const LED_TYPE_SK6812 = 1;
               <th>Dimensions</th>
               <th>Brightness</th>
               <th>Framerate</th>
+              <th>fps_actual</th>
+              <th>fps_callbacks</th>
+              <th>num_buffer_underrun</th>
+              <th>num_callbacks</th>
+              <th>num_frames</th>
+              <th>num_heartbeats</th>
+              <th>read_index</th>
+              <th>write_index</th>
             </tr>
           </table>
       </div>
@@ -386,6 +412,9 @@ const LED_TYPE_SK6812 = 1;
           sliderChanged(slider);
         });
       }
+      setTimeout(function() {
+        connectWS();
+      }, 333);
     </script>
 </body>
 

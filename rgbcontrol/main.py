@@ -121,6 +121,7 @@ runtime_stats_message = struct.Struct("<Q Q q q q q f f")
 request_heartbeat_message = struct.Struct("<B")
 
 # global runtime variables
+g_enable_runtime_stats = True
 g_time_start = 0
 g_num_frames_all_lamps = 0
 g_abs_speed = 2.0
@@ -268,7 +269,8 @@ class LampConfigEncoder(json.JSONEncoder):
 class Lamp:
     """Class representing a lamp"""
 
-    def __init__(self, name, ip, port, ip_pton):
+    def __init__(self, idx, name, ip, port, ip_pton):
+        self.idx = idx
         self.name = name
         self.ip = ip
         self.port = port
@@ -382,6 +384,7 @@ class Lamp:
                     return True
 
         return False
+
     def gen_frame(self, sock, frame_id):
         time_since = frame_id / self.config.frame_rate
         led_frame_data = None
@@ -511,9 +514,9 @@ class Lamp:
             ) = runtime_stats_message.unpack(data[4:])
             self.stats = lamp_stats
             # calculate buffer fill level
-            buf_fill = lamp_stats["write_index"] - lamp_stats["read_index"]
-            print(self.name, "Buffer fill level", buf_fill)
-            print(self.stats)
+            # buf_fill = lamp_stats["write_index"] - lamp_stats["read_index"]
+            # print(self.name, "Buffer fill level", buf_fill)
+            # print(self.stats)
         elif pkt_type == PKT_TYPE_CONFIG_ALL:
             (
                 version,
@@ -564,6 +567,7 @@ class Lamp:
                 rmt_clock_hz,
             )
             print(self.config)
+
     def get_time_last_packet(self):
         return self.tmLastPacket
 
@@ -764,10 +768,28 @@ def process_pixels_white_noise(time_since, frame_id, state, dimensions):
     return led_frame_data
 
 def init_lamp(server, ip_pton, ip_str, port):
+    global g_enable_runtime_stats
     sock = server["socket"]
     args = server["args"]
-    lamp_idx = len(server["lamps"])
+    # lamp_idx = len(server["lamps"])
+    lamp_idx = 0
+    # find first free
+    for i in range(len(server["lamps"])):
+        if server["lamps"][i].ip_pton == ip_pton:
+            print("Error: lamp with same IP already connected", ip_str)
+            return False
+    while True:
+        lamp_exists = False
+        for i in range(len(server["lamps"])):
+            if server["lamps"][i].idx == lamp_idx:
+                lamp_exists = True
+                break
+        if lamp_exists:
+            lamp_idx += 1
+        else:
+            break
     lamp = Lamp(
+        lamp_idx,
         "Lamp" + str(lamp_idx + 1),
         ip_str,
         port,
@@ -810,7 +832,7 @@ def init_lamp(server, ip_pton, ip_str, port):
     newLamps.append(lamp)
     print("Lamp connected", lamp.name, lamp.ip)
     server["lamps"] = newLamps
-    lamp.request_heartbeat(sock, enable_heartbeat=True, enable_runtime_stats=False)
+    lamp.request_heartbeat(sock, enable_heartbeat=True, enable_runtime_stats=g_enable_runtime_stats)
     return True
 
 # second thread function to recv heartbeats
@@ -859,7 +881,7 @@ def is_valid_ipv6_address(address):
 
 
 async def websocket_handler(websocket):
-    global g_server, g_abs_scale, g_abs_speed
+    global g_server, g_abs_scale, g_abs_speed, g_enable_runtime_stats
     while True:
         try:
           message = await websocket.recv()
@@ -875,6 +897,7 @@ async def websocket_handler(websocket):
                               "hostname": lamp.name,
                               "ip": lamp.ip,
                               "config": lamp_config_obj,
+                              "stats": lamp.stats,
                           }
                       )
                   response_json_str = json.dumps(response_obj)
@@ -907,7 +930,7 @@ async def websocket_handler(websocket):
                               lamp.config.frame_rate = int(cfgValue)
                               lamp.send_config(g_server["socket"])
                           for lamp in g_server["lamps"]:
-                              lamp.request_heartbeat(g_server["socket"], enable_heartbeat=True, enable_runtime_stats=False)
+                              lamp.request_heartbeat(g_server["socket"], enable_heartbeat=True, enable_runtime_stats=g_enable_runtime_stats)
                       if cfgId == CFG_ID_MAX_BRIGHTNESS:
                           for lamp in g_server["lamps"]:
                               lamp.config.max_brightness = int(cfgValue)
@@ -991,8 +1014,6 @@ def main(args=None):
     # create second thread to receive heartbeats using the same socket
     thread = threading.Thread(target=recv_udp_packets, args=(server,), daemon=True)
     thread.start()
-    # for lamp in server["lamps"]:
-    #     lamp.request_heartbeat(sock, enable_heartbeat=True, enable_runtime_stats=False)
 
     time_last_fps = time.time()
     avg_fps = 1.0
