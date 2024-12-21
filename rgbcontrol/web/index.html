@@ -146,6 +146,13 @@ const LED_TYPE_SK6812 = 1;
         }
       }
 
+      function updateHeartbeat(slider) {
+        updateSliderBubble(slider);
+        if (ws && ws.readyState == WebSocket.OPEN) {
+          sendNewValueToESP32(CFG_ID_HEARTBEAT_INTERVAL_FRAMES, parseClampValue(slider.value, CFG_ID_HEARTBEAT_INTERVAL_FRAMES));
+        }
+      }
+
       function sliderChanged(slider) {
         updateSliderBubble(slider);
       }
@@ -203,6 +210,11 @@ const LED_TYPE_SK6812 = 1;
                       }
                       break;
                     case CFG_ID_HEARTBEAT_INTERVAL_FRAMES:
+                      let sliderHeartbeat = document.getElementById("sliderHeartbeat");
+                      if (sliderHeartbeat) {
+                        sliderHeartbeat.value = obj.value;
+                        sliderChanged(sliderHeartbeat);
+                      }
                       break;
                     default:
                       break;
@@ -275,6 +287,13 @@ const LED_TYPE_SK6812 = 1;
                       sliderChanged(sliderFPS);
                     }
                   }
+                  if ("heartbeat_interval_frames" in lamp_config) {
+                    let sliderHeartbeat = document.getElementById("sliderHeartbeat");
+                    if (sliderHeartbeat) {
+                      sliderHeartbeat.value = lamp_config.heartbeat_interval_frames;
+                      sliderChanged(sliderHeartbeat);
+                    }
+                  }
                   break;
                 }
                 break;
@@ -314,7 +333,7 @@ const LED_TYPE_SK6812 = 1;
         <!-- <div id="picker" class="noslide"></div> -->
         <br>
         <br>
-        <div class="container_brightness">
+        <div class="container_config_setting">
           <label for="sliderFPS">Framerate</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
           <div class="slider">
             <div class="sliderwrap">
@@ -325,7 +344,7 @@ const LED_TYPE_SK6812 = 1;
         </div>
         <br>
         <br>
-        <div class="container_brightness">
+        <div class="container_config_setting">
           <label for="sliderBri">Brightness</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
           <div class="slider">
             <div class="sliderwrap">
@@ -336,7 +355,7 @@ const LED_TYPE_SK6812 = 1;
         </div>
         <br>
         <br>
-        <div class="container_scale">
+        <div class="container_config_setting">
           <label for="sliderScale">Scale</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
           <div class="slider">
             <div class="sliderwrap">
@@ -347,11 +366,22 @@ const LED_TYPE_SK6812 = 1;
         </div>
         <br>
         <br>
-        <div class="container_tempo">
+        <div class="container_config_setting">
           <label for="sliderTempo">Tempo</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
           <div class="slider">
             <div class="sliderwrap">
               <input id="sliderTempo" onchange="updateTempo(this)" step="0.01" max="5.0" min="0.01" type="range" value="0.5">
+              <div class="sliderdisplay"></div>
+            </div>
+          </div>
+        </div>
+        <br>
+        <br>
+        <div class="container_config_setting">
+          <label for="sliderHeartbeat">Heartbeat</label>&nbsp;&nbsp;<output class="sliderbubble"></output>
+          <div class="slider">
+            <div class="sliderwrap">
+              <input id="sliderHeartbeat" onchange="updateHeartbeat(this)" step="1" max="32" min="1" type="range" value="8">
               <div class="sliderdisplay"></div>
             </div>
           </div>
@@ -370,14 +400,14 @@ const LED_TYPE_SK6812 = 1;
               <th>Dimensions</th>
               <th>Brightness</th>
               <th>Framerate</th>
-              <th>fps_actual</th>
-              <th>fps_callbacks</th>
-              <th>num_buffer_underrun</th>
-              <th>num_callbacks</th>
-              <th>num_frames</th>
-              <th>num_heartbeats</th>
-              <th>read_index</th>
-              <th>write_index</th>
+              <th>FPS active</th>
+              <th>FPS timer</th>
+              <th>Frames Dropped</th>
+              <th>Callbacks</th>
+              <th>Frames</th>
+              <th>Heartbeats</th>
+              <th>Read Pos</th>
+              <th>Write Pos</th>
             </tr>
           </table>
       </div>

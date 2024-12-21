@@ -267,7 +267,7 @@ static void log_display_strip_config(display_led_strip_config_all_t* config) {
 }
 
 static void display_strips_init();
-static void display_config_set(display_config_t* config, bool bForceReset) {
+static void display_config_set(display_config_t* config, bool bForceReset, bool bReInit) {
   bool bChanged = memcmp(&displayConfig, config, sizeof(display_config_t)) != 0;
   log_display_config(config);
   if (bChanged || bForceReset) {
@@ -277,8 +277,10 @@ static void display_config_set(display_config_t* config, bool bForceReset) {
     vTaskDelay(5);
     xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
     displayConfig = *config;
-    display_strips_init();
-    display_buffer_position_reset();
+    if (bReInit) {
+      display_strips_init();
+      display_buffer_position_reset();
+    }
     xSemaphoreGive(semaphoreDisplay);
     if (periodic_timer) {
       ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 1000000 / config->frameRate));
@@ -808,12 +810,15 @@ bool write_config_single_packet(struct packet_config_single_t* pkt, char errMsg[
   xSemaphoreTake(semaphoreDisplay, portMAX_DELAY);
   display_config_t config = displayConfig;
   xSemaphoreGive(semaphoreDisplay);
+  bool bReInit = false;
   switch (cfgId) {
     case CFG_ID_DIMENSIONS_WIDTH:
       config.dimensionsWidth = clamp_u32(pkt->message.value, 1, CONFIG_MAX_STRIPS);
+      bReInit = true;
       break;
     case CFG_ID_DIMENSIONS_HEIGHT:
       config.dimensionsHeight = clamp_u32(pkt->message.value, 1, CONFIG_MAX_LEDS);
+      bReInit = true;
       break;
     case CFG_ID_MAX_BRIGHTNESS:
       config.maxBrightness = clamp_u32(pkt->message.value, 0, 255);
@@ -834,7 +839,7 @@ bool write_config_single_packet(struct packet_config_single_t* pkt, char errMsg[
       break;
   }
   if (display_config_validate(&config, errMsg)) {
-    display_config_set(&config, false);
+    display_config_set(&config, false, bReInit);
     strncpy(errMsg, "Set display config", CONFIG_ERR_MSG_BUF_SIZE);
     return true;
   }
@@ -843,7 +848,7 @@ bool write_config_single_packet(struct packet_config_single_t* pkt, char errMsg[
 
 bool write_config_all_packet(display_config_t* config, char errMsg[CONFIG_ERR_MSG_BUF_SIZE]) {
   if (display_config_validate(config, errMsg)) {
-    display_config_set(config, true);
+    display_config_set(config, true, true);
     strncpy(errMsg, "Set display config", CONFIG_ERR_MSG_BUF_SIZE);
     return true;
   } else {

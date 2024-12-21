@@ -282,7 +282,7 @@ select option {
   opacity: 1;
 }
 
-.container_brightness {
+.container_config_setting {
   max-width: var(--pw);
   line-height: 2em;
 }

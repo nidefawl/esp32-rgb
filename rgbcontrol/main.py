@@ -582,7 +582,7 @@ def process_pixels_rainbow_circle(time_since, frame_id, state, dimensions):
     speed2 = 33 * g_abs_speed
     f = math.cos(time_since * speed2 * math.pi / 180) * 0.5 + 0.5
     f2 = math.cos(time_since * speed2 * 1.1 * math.pi / 180) * 0.5 + 0.5
-    palette_phase = time_since * 0.1
+    palette_phase = time_since * 0.1 * g_abs_speed
     idx_palette = int(palette_phase) % len(palettes)
     palette_phase = palette_phase % 1.0
     for strip in range(LED_NUM_STRIPS):
@@ -924,17 +924,22 @@ async def websocket_handler(websocket):
                       cfgId = obj["cfgId"]
                       cfgValue = obj["value"]
                       if cfgId == CFG_ID_FRAME_RATE:
-                          for lamp in g_server["lamps"]:
-                              lamp.request_heartbeat(g_server["socket"], enable_heartbeat=False, enable_runtime_stats=False)
+                          # for lamp in g_server["lamps"]:
+                          #     lamp.request_heartbeat(g_server["socket"], enable_heartbeat=False, enable_runtime_stats=False)
                           for lamp in g_server["lamps"]:
                               lamp.config.frame_rate = int(cfgValue)
-                              lamp.send_config(g_server["socket"])
-                          for lamp in g_server["lamps"]:
-                              lamp.request_heartbeat(g_server["socket"], enable_heartbeat=True, enable_runtime_stats=g_enable_runtime_stats)
+                              lamp.update_config(g_server["socket"], CFG_ID_FRAME_RATE, lamp.config.frame_rate)
+                              # lamp.send_config(g_server["socket"])
+                          # for lamp in g_server["lamps"]:
+                          #     lamp.request_heartbeat(g_server["socket"], enable_heartbeat=True, enable_runtime_stats=g_enable_runtime_stats)
                       if cfgId == CFG_ID_MAX_BRIGHTNESS:
                           for lamp in g_server["lamps"]:
                               lamp.config.max_brightness = int(cfgValue)
                               lamp.update_config(g_server["socket"], CFG_ID_MAX_BRIGHTNESS, lamp.config.max_brightness)
+                      if cfgId == CFG_ID_HEARTBEAT_INTERVAL_FRAMES:
+                          for lamp in g_server["lamps"]:
+                              lamp.config.heartbeat_interval_frames = int(cfgValue)
+                              lamp.update_config(g_server["socket"], CFG_ID_HEARTBEAT_INTERVAL_FRAMES, lamp.config.heartbeat_interval_frames)
                       if cfgId == CFG_ID_TEMPO:
                           g_abs_speed = float(cfgValue)
                       if cfgId == CFG_ID_SCALE:
