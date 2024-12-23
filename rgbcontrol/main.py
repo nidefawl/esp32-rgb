@@ -281,6 +281,7 @@ class Lamp:
         self.program_state = {}
         self.stats = {}
         self.tmLastPacket = time.time()
+        self.frame_counter = 0
 
     def __str__(self):
         return (
@@ -484,20 +485,38 @@ class Lamp:
     def get_frame_id_max(self):
         return self.frame_id_max
 
-    def handle_packet(self, sock, data, pkt_type):
+    def handle_packet(self, server, data, pkt_type):
         global g_num_frames_all_lamps
+        sock = server["socket"]
+        sync_to_first_lamp = True
         self.tmLastPacket = time.time()
         if pkt_type == PKT_TYPE_HEARTBEAT:
             frame_id, buf_fill = heartbeat_message.unpack(data[4:])
             num_frames_to_generate = self.config.heartbeat_interval_frames
-            if buf_fill < 32:
+            if buf_fill < 16:
+                num_frames_to_generate += 4
+                # print("4 frames added", buf_fill)
+            if buf_fill < 48-5:
                 num_frames_to_generate += 1
-            if buf_fill > 40:
+                # print("1 frame added", buf_fill)
+            if buf_fill > 48+self.config.heartbeat_interval_frames-5:
                 num_frames_to_generate -= 1
+                # print("1 frame removed", buf_fill)
+
+            frame_id = self.frame_counter
+            if sync_to_first_lamp:
+                # find lamp with highest frame id
+                lamp_highest = max(server["lamps"], key=lambda x: x.frame_counter)
+                if lamp_highest is not self and lamp_highest.frame_counter > frame_id:
+                    abs_diff = lamp_highest.frame_counter - frame_id
+                    if abs_diff > 100:
+                      frame_id = lamp_highest.frame_counter
+                      print("Syncing to ", lamp_highest.name, frame_id)
 
             for _ in range(num_frames_to_generate):
                 self.gen_frame(sock, frame_id)
                 frame_id += 1
+            self.frame_counter = frame_id
             g_num_frames_all_lamps += num_frames_to_generate
         elif pkt_type == PKT_TYPE_RUNTIME_STATS:
             # put stuff in a dictionary
@@ -867,7 +886,7 @@ def recv_udp_packets(*args):
               if lamp == None:
                 print("Error: received unexpected packet ", pkt_type, "from unknown lamp", ip)
                 continue
-              lamp.handle_packet(sock, data, pkt_type)
+              lamp.handle_packet(server, data, pkt_type)
         else:
             print("Received packet with invalid size", len(data))
 
