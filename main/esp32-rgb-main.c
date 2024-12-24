@@ -654,7 +654,7 @@ static void display_strips_update(void* arg)
       if (xSemaphoreTake(semaphoreNetworkMasterAddress, portMAX_DELAY) == pdTRUE) {
         if (g_udp_master_address.s2_len) {
             send_udp_packet(socket, &g_udp_master_address, &heartbeat, sizeof(heartbeat));
-            int heartbeatsPerSecond = displayConfig.frameRate / displayConfig.heartbeatIntervalFrames;
+            int heartbeatsPerSecond = MAX(1, displayConfig.frameRate / displayConfig.heartbeatIntervalFrames);
             if (displayState.bRuntimeStatsEnabled && displayState.numCallbacks % heartbeatsPerSecond == 0) {
               struct packet_runtime_stats_t stats = {
                 .header = {
