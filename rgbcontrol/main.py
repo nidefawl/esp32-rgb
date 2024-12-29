@@ -387,7 +387,7 @@ class Lamp:
         return False
 
     def gen_frame(self, sock, frame_id):
-        time_since = frame_id / self.config.frame_rate
+        time_since = frame_id / max(1, self.config.frame_rate)
         led_frame_data = None
         if "image" in self.program_state:
             if "image_load_failed" in self.program_state:
